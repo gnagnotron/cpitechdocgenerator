@@ -1,10 +1,15 @@
-# SAP iFlow Doc Generator MVP
+# SAP iFlow Doc Generator
 
-Web app MVP production-ready per generare documentazione tecnica, funzionale e handover da zip SAP Integration Flow.
+Web app production-ready per generare documentazione tecnica, funzionale, handover, audit e training da ZIP SAP Integration Flow.
 
 ## Feature
 
 - Upload ZIP iFlow (drag and drop + file picker)
+- Multi-lingua UI e documenti: IT, EN, FR, DE
+- Multi-template: tecnico, funzionale, handover, audit, training
+- Modalita `deterministic` e `ai-enhanced` con fallback automatico
+- API pubblica per generazione documenti (`/api/docs/generate`)
+- Cronologia sessioni server + locale e recovery da link condivisibile
 - Validazione struttura file critica/non critica
 - Parsing deterministico di:
 	- MANIFEST.MF
@@ -17,16 +22,19 @@ Web app MVP production-ready per generare documentazione tecnica, funzionale e h
 	- Documento Tecnico
 	- Documento Funzionale
 	- Documento Handover/Onboarding
+	- Documento Audit
+	- Documento Training
 - Export Markdown + HTML
 - Download singoli documenti + pacchetto ZIP finale
 - Warning strutturati lato server
-- Modalita deterministic-only (nessun provider AI richiesto)
+- Template custom via `templates/*.hbs` + `templates/config.json`
+- Modalita deterministic-first con provider AI opzionali
 
 ## Stack
 
 - Node.js + TypeScript (strict)
 - Next.js (React + API routes server-side)
-- Nessun database
+- Nessun database obbligatorio
 - Deploy target: Render Web Service
 
 ## Requisiti
@@ -68,23 +76,33 @@ npm run test
 
 ## Variabili ambiente
 
-Per MVP deterministic-only non sono obbligatorie variabili ambiente.
+Per la modalita deterministic-only non sono obbligatorie variabili ambiente.
 
-Variabili opzionali future (non necessarie ora):
+Variabili opzionali supportate:
 
-- AI_PROVIDER
-- AI_API_KEY
+- GROQ_API_KEY
+- OLLAMA_HOST
+- OPENAI_API_KEY
 
-Se assenti, il sistema continua in deterministic-only.
+Se assenti, il sistema continua in fallback deterministic.
 
 ## Struttura progetto
 
 - src/app/page.tsx: UI singola pagina
 - src/app/api/generate/route.ts: endpoint generazione
+- src/app/api/docs/generate/route.ts: API pubblica JSON/base64
+- src/app/api/sessions/route.ts: lista sessioni server
+- src/app/api/sessions/[id]/route.ts: recovery sessione condivisa
 - src/lib/errors.ts: gestione errori centralizzata
 - src/lib/logger.ts: warning strutturati lato server
+- src/lib/ai-enhancer.ts: enhancer AI opzionale con timeout e fallback
+- src/lib/locales/*: dizionari runtime per UI e documenti
 - src/lib/parsers/*: parser zip/xml/properties
-- src/lib/pipeline/generate.ts: orchestrazione end-to-end e template docs
+- src/lib/pipeline/generate.ts: orchestrazione end-to-end, template engine e quality gate
+- src/lib/session-store.ts: persistenza sessioni server su file temp
+- src/lib/templates/*: registry e definizioni template
+- locales/*.json: catalogo lingua condiviso
+- templates/*.hbs: template documenti personalizzabili
 - tests/*.test.ts: unit test parser/generator
 - samples/demo-output: output esempio
 - render.yaml: deploy Render
@@ -104,6 +122,42 @@ Response JSON:
 - documents[] con markdown/html
 - bundleBase64 (ZIP con tutti output)
 
+### POST /api/docs/generate
+
+application/json:
+
+- zipBase64: string
+- language: `it|en|fr|de`
+- templateIds: `technical|functional|handover|audit|training`[]
+- mode: `deterministic|ai-enhanced`
+
+Response JSON:
+
+- sessionId
+- sharePath
+- warnings[]
+- canonicalModel
+- flowGraph
+- qualityGate
+- aiReport
+- documents[]
+- bundleBase64
+
+### GET /api/sessions
+
+Lista metadati sessioni server recenti.
+
+### GET /api/sessions/:id
+
+Recupera una sessione completa per preview/link condivisibile.
+
+## Personalizzazione template
+
+1. Modifica `templates/*.hbs` per cambiare la resa dei documenti.
+2. Aggiorna `templates/config.json` per default selection e stima tempi.
+3. Mantieni i placeholder coerenti con il contesto del generatore (`artifact`, `inputs`, `mapping`, `output`, `references`, ecc.).
+4. Se rompi le heading minime, il quality gate puo fallire.
+
 ## Deploy su Render (step-by-step)
 
 1. Push repository su GitHub.
@@ -114,6 +168,7 @@ Response JSON:
 	 - Environment: Node
 	 - Build Command: npm install && npm run build
 	 - Start Command: npm run start
+	 - Env vars opzionali: `GROQ_API_KEY`, `OLLAMA_HOST`, `OPENAI_API_KEY`
 6. Deploy.
 7. Apri URL Render e testa upload di uno ZIP iFlow.
 

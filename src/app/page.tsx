@@ -1,32 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
-
-type DocItem = {
-  name: string;
-  markdown: string;
-  html: string;
-};
-
-type WarningItem = {
-  code: string;
-  message: string;
-  suggestion?: string;
-};
+import { useEffect, useMemo, useState } from "react";
+import { listLocalSessionMeta, saveLocalSessionMeta } from "@/lib/client/session-history";
+import { getLocaleMessages, supportedLanguages } from "@/lib/locales";
+import { defaultTemplateIds, templateDefinitions } from "@/lib/templates/definitions";
+import type {
+  DocumentTemplateId,
+  GeneratedDocument,
+  GeneratedSessionMeta,
+  GenerationMode,
+  LanguageCode,
+  QualityGateReport,
+  StructuredWarning,
+} from "@/lib/types";
 
 type ApiSuccess = {
-  warnings: WarningItem[];
-  documents: DocItem[];
+  sessionId: string;
+  sharePath: string;
+  warnings: StructuredWarning[];
+  documents: GeneratedDocument[];
   bundleBase64: string;
+  locale: LanguageCode;
+  mode: GenerationMode;
+  selectedTemplateIds: DocumentTemplateId[];
+  qualityGate: QualityGateReport;
+  aiReport: {
+    enabled: boolean;
+    fallbackReason?: string;
+  };
 };
 
-const phases = [
-  "Upload zip",
-  "Validazione struttura iFlow",
-  "Parsing deterministico",
-  "Generazione documenti",
-  "Packaging output",
-];
+type SessionResponse = GeneratedSessionMeta & {
+  warnings: StructuredWarning[];
+  documents: GeneratedDocument[];
+  qualityGate: QualityGateReport;
+};
 
 const decodeBase64ToBlob = (base64: string, mimeType: string) => {
   const raw = atob(base64);
@@ -49,24 +57,88 @@ const downloadText = (fileName: string, content: string, type: string) => {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [language, setLanguage] = useState<LanguageCode>("it");
+  const [mode, setMode] = useState<GenerationMode>("deterministic");
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<DocumentTemplateId[]>(defaultTemplateIds);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<WarningItem[]>([]);
-  const [documents, setDocuments] = useState<DocItem[]>([]);
-  const [bundleBase64, setBundleBase64] = useState<string>("");
+  const [warnings, setWarnings] = useState<StructuredWarning[]>([]);
+  const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
+  const [bundleBase64, setBundleBase64] = useState("");
   const [activeDoc, setActiveDoc] = useState(0);
   const [previewMode, setPreviewMode] = useState<"markdown" | "html">("markdown");
+  const [activeTab, setActiveTab] = useState<"upload" | "template" | "history">("upload");
+  const [serverSessions, setServerSessions] = useState<GeneratedSessionMeta[]>([]);
+  const [localSessions, setLocalSessions] = useState<GeneratedSessionMeta[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sharePath, setSharePath] = useState("");
+  const [qualityGate, setQualityGate] = useState<QualityGateReport | null>(null);
+  const [aiFallbackReason, setAiFallbackReason] = useState<string | null>(null);
+  const locale = getLocaleMessages(language);
 
-  const canGenerate = Boolean(file) && !loading;
   const activeDocument = documents[activeDoc];
+  const estimatedSeconds = useMemo(() => {
+    const base = selectedTemplateIds.reduce((total, templateId) => total + templateDefinitions[templateId].estimatedSeconds, 0);
+    return mode === "ai-enhanced" ? base + 20 : base;
+  }, [mode, selectedTemplateIds]);
 
-  const statusLabel = useMemo(() => {
-    if (!loading && documents.length > 0) {
-      return "Completato";
+  const refreshSessions = async () => {
+    try {
+      const [serverResponse, local] = await Promise.all([
+        fetch("/api/sessions").then((response) => response.json()),
+        listLocalSessionMeta(),
+      ]);
+      setServerSessions(serverResponse.sessions ?? []);
+      setLocalSessions(local);
+    } catch {
+      setLocalSessions([]);
     }
-    return phases[Math.min(phaseIndex, phases.length - 1)];
-  }, [loading, phaseIndex, documents.length]);
+  };
+
+  useEffect(() => {
+    const storedLanguage = window.localStorage.getItem("doc-language") as LanguageCode | null;
+    if (storedLanguage && supportedLanguages.includes(storedLanguage)) {
+      setLanguage(storedLanguage);
+    }
+    refreshSessions();
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("doc-language", language);
+  }, [language]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sharedSession = params.get("session");
+    if (!sharedSession) {
+      return;
+    }
+
+    const loadSharedSession = async () => {
+      try {
+        const response = await fetch(`/api/sessions/${sharedSession}`);
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as SessionResponse;
+        setDocuments(payload.documents);
+        setWarnings(payload.warnings);
+        setQualityGate(payload.qualityGate);
+        setLanguage(payload.language);
+        setMode(payload.mode);
+        setSelectedTemplateIds(payload.templateIds);
+        setSessionId(payload.id);
+        setSharePath(payload.sharePath);
+        setActiveDoc(0);
+      } catch {
+        // Ignore shared-session restore failures in UI.
+      }
+    };
+
+    loadSharedSession();
+  }, []);
+
+  const canGenerate = Boolean(file) && !loading && selectedTemplateIds.length > 0;
 
   const handleSubmit = async () => {
     if (!file) {
@@ -78,25 +150,25 @@ export default function Home() {
     setWarnings([]);
     setDocuments([]);
     setBundleBase64("");
-    setPhaseIndex(0);
+    setAiFallbackReason(null);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("language", language);
+      formData.append("mode", mode);
+      for (const templateId of selectedTemplateIds) {
+        formData.append("templateIds", templateId);
+      }
 
-      setPhaseIndex(1);
       const response = await fetch("/api/generate", {
         method: "POST",
         body: formData,
       });
 
-      setPhaseIndex(3);
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(
-          payload?.error?.message ||
-            "Errore nella generazione. Suggerimento: verifica zip e struttura iFlow.",
-        );
+        throw new Error(payload?.error?.message || "Generation failed.");
       }
 
       const success = payload as ApiSuccess;
@@ -104,10 +176,25 @@ export default function Home() {
       setDocuments(success.documents);
       setBundleBase64(success.bundleBase64);
       setActiveDoc(0);
-      setPhaseIndex(4);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Errore sconosciuto";
-      setError(message);
+      setSessionId(success.sessionId);
+      setSharePath(success.sharePath);
+      setQualityGate(success.qualityGate);
+      setAiFallbackReason(success.aiReport.fallbackReason ?? null);
+
+      await saveLocalSessionMeta({
+        id: success.sessionId,
+        createdAt: new Date().toISOString(),
+        fileName: file.name,
+        language,
+        mode,
+        templateIds: selectedTemplateIds,
+        aiUsed: success.aiReport.enabled,
+        sharePath: success.sharePath,
+      });
+      await refreshSessions();
+      setActiveTab("upload");
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : "Errore sconosciuto");
     } finally {
       setLoading(false);
     }
@@ -122,86 +209,207 @@ export default function Home() {
     }
   };
 
-  return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
-      <section className="panel p-6 md:p-8">
-        <p className="mono text-xs uppercase tracking-[0.18em] text-cyan-700">
-          SAP CPI Doc Forge
-        </p>
-        <h1 className="mt-2 text-3xl font-bold md:text-4xl">iFlow ZIP to Documentation</h1>
-        <p className="mt-3 max-w-3xl text-sm text-slate-600 md:text-base">
-          Carica un export ZIP di SAP Integration Flow e genera in modo deterministico Documento Tecnico,
-          Funzionale, Handover, versioni Markdown/HTML e pacchetto finale ZIP.
-        </p>
-      </section>
+  const toggleTemplate = (templateId: DocumentTemplateId) => {
+    setSelectedTemplateIds((current) =>
+      current.includes(templateId)
+        ? current.filter((item) => item !== templateId)
+        : [...current, templateId],
+    );
+  };
 
-      <section className="grid gap-6 md:grid-cols-2">
-        <div className="panel p-5">
-          <div
-            className="rounded-xl border border-dashed border-cyan-400 bg-cyan-50/40 p-6 text-center"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={onDrop}
-          >
-            <p className="text-sm text-slate-700">Drag & drop ZIP iFlow</p>
-            <p className="mt-2 text-xs text-slate-500">oppure seleziona manualmente</p>
-            <input
-              type="file"
-              accept=".zip"
-              className="mt-4 block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <p className="mono mt-3 text-xs text-slate-600">{file ? file.name : "Nessun file selezionato"}</p>
+  const copyShareLink = async () => {
+    if (!sharePath) {
+      return;
+    }
+    await navigator.clipboard.writeText(`${window.location.origin}${sharePath}`);
+  };
+
+  return (
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
+      <section className="panel p-6 md:p-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="mono text-xs uppercase tracking-[0.18em] text-cyan-700">{locale.ui.appName}</p>
+            <h1 className="mt-2 text-3xl font-bold md:text-4xl">{locale.ui.headline}</h1>
+            <p className="mt-3 max-w-4xl text-sm text-slate-600 md:text-base">{locale.ui.subtitle}</p>
           </div>
 
-          <button
-            type="button"
-            className="mt-4 w-full rounded-lg bg-teal-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-600 disabled:cursor-not-allowed disabled:bg-slate-400"
-            disabled={!canGenerate}
-            onClick={handleSubmit}
-          >
-            {loading ? "Generazione in corso..." : "Genera documentazione"}
-          </button>
+          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:min-w-[320px]">
+            <label className="text-sm font-medium text-slate-700">
+              {locale.ui.labels.language}
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                value={language}
+                onChange={(event) => setLanguage(event.target.value as LanguageCode)}
+              >
+                {supportedLanguages.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {locale.ui.languages[lang]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm font-medium text-slate-700">
+              {locale.ui.labels.mode}
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                value={mode}
+                onChange={(event) => setMode(event.target.value as GenerationMode)}
+              >
+                <option value="deterministic">{locale.ui.labels.deterministic}</option>
+                <option value="ai-enhanced">{locale.ui.labels.aiEnhanced}</option>
+              </select>
+            </label>
+
+            <p className="text-xs text-slate-500">
+              {locale.ui.labels.estimatedTime}: ~{estimatedSeconds}s
+            </p>
+            {mode === "ai-enhanced" && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {locale.ui.labels.aiUnavailable}
+              </p>
+            )}
+          </div>
         </div>
 
-        <div className="panel p-5">
-          <h2 className="text-lg font-semibold">Progress status</h2>
-          <p className="mt-2 text-sm text-slate-600">Fase corrente: {statusLabel}</p>
-          <ul className="mt-4 space-y-2">
-            {phases.map((phase, idx) => (
-              <li
-                key={phase}
-                className={`rounded-md px-3 py-2 text-sm ${
-                  idx < phaseIndex
-                    ? "bg-teal-50 text-teal-800"
-                    : idx === phaseIndex && loading
-                      ? "bg-cyan-50 text-cyan-700"
-                      : "bg-slate-50 text-slate-600"
-                }`}
-              >
-                {idx + 1}. {phase}
-              </li>
-            ))}
-          </ul>
+        <div className="mt-5 flex flex-wrap gap-2">
+          {(["upload", "template", "history"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                activeTab === tab ? "bg-cyan-700 text-white" : "bg-slate-100 text-slate-700"
+              }`}
+            >
+              {locale.ui.tabs[tab]}
+            </button>
+          ))}
         </div>
       </section>
 
-      {(error || warnings.length > 0) && (
+      {activeTab === "upload" && (
+        <section className="grid gap-6 md:grid-cols-[1.1fr_0.9fr]">
+          <div className="panel p-5">
+            <div
+              className="rounded-xl border border-dashed border-cyan-400 bg-cyan-50/40 p-6 text-center"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={onDrop}
+            >
+              <p className="text-sm text-slate-700">{locale.ui.labels.uploadHint}</p>
+              <input
+                type="file"
+                accept=".zip"
+                className="mt-4 block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              />
+              <p className="mono mt-3 text-xs text-slate-600">{file ? file.name : locale.ui.labels.noFile}</p>
+            </div>
+
+            <button
+              type="button"
+              className="mt-4 w-full rounded-lg bg-teal-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-600 disabled:cursor-not-allowed disabled:bg-slate-400"
+              disabled={!canGenerate}
+              onClick={handleSubmit}
+            >
+              {loading ? locale.ui.labels.generating : locale.ui.labels.generate}
+            </button>
+          </div>
+
+          <div className="panel p-5">
+            <h2 className="text-lg font-semibold">{locale.ui.labels.templates}</h2>
+            <div className="mt-4 grid gap-3">
+              {(Object.keys(templateDefinitions) as DocumentTemplateId[]).map((templateId) => {
+                const template = templateDefinitions[templateId];
+                const selected = selectedTemplateIds.includes(templateId);
+                return (
+                  <label
+                    key={templateId}
+                    className={`flex items-start gap-3 rounded-xl border p-3 ${selected ? "border-cyan-500 bg-cyan-50" : "border-slate-200 bg-white"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleTemplate(templateId)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-900">{locale.ui.templates[templateId]}</span>
+                      <span className="block text-xs text-slate-500">~{template.estimatedSeconds}s</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "history" && (
+        <section className="grid gap-6 md:grid-cols-2">
+          <div className="panel p-5">
+            <h2 className="text-lg font-semibold">Server sessions</h2>
+            <div className="mt-4 space-y-3">
+              {serverSessions.length === 0 && <p className="text-sm text-slate-500">No recent sessions.</p>}
+              {serverSessions.map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className="block w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-left"
+                  onClick={() => {
+                    window.location.href = session.sharePath;
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-900">{session.fileName}</span>
+                    <span className="mono text-xs text-slate-500">{session.language.toUpperCase()}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{new Date(session.createdAt).toLocaleString()}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel p-5">
+            <h2 className="text-lg font-semibold">Local history</h2>
+            <div className="mt-4 space-y-3">
+              {localSessions.length === 0 && <p className="text-sm text-slate-500">No recent sessions.</p>}
+              {localSessions.map((session) => (
+                <div key={session.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-900">{session.fileName}</span>
+                    <span className="mono text-xs text-slate-500">{session.mode}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{new Date(session.createdAt).toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {(error || warnings.length > 0 || aiFallbackReason || qualityGate) && (
         <section className="panel p-5">
-          <h2 className="text-lg font-semibold">Warning / Errori</h2>
-          {error && (
-            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              <p className="font-semibold">Errore</p>
-              <p>{error}</p>
-              <p className="mt-1 text-xs">Azione suggerita: verifica file critici e riprova.</p>
+          <h2 className="text-lg font-semibold">Warnings / Errors</h2>
+          {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          {aiFallbackReason && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              AI fallback: {aiFallbackReason}
+            </div>
+          )}
+          {qualityGate && (
+            <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
+              Quality gate: {(qualityGate.score * 100).toFixed(0)}%
             </div>
           )}
           {warnings.length > 0 && (
             <ul className="mt-3 space-y-2">
-              {warnings.map((w) => (
-                <li key={w.code + w.message} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                  <p className="mono text-xs text-amber-800">{w.code}</p>
-                  <p className="text-sm text-amber-900">{w.message}</p>
-                  {w.suggestion && <p className="mt-1 text-xs text-amber-800">{w.suggestion}</p>}
+              {warnings.map((warning) => (
+                <li key={`${warning.code}-${warning.message}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="mono text-xs text-amber-800">{warning.code}</p>
+                  <p className="text-sm text-amber-900">{warning.message}</p>
+                  {warning.suggestion && <p className="mt-1 text-xs text-amber-800">{warning.suggestion}</p>}
                 </li>
               ))}
             </ul>
@@ -221,7 +429,7 @@ export default function Home() {
                   idx === activeDoc ? "bg-cyan-700 text-white" : "bg-slate-100 text-slate-700"
                 }`}
               >
-                {doc.name}
+                {doc.displayName ?? doc.name}
               </button>
             ))}
             <div className="ml-auto flex gap-2">
@@ -248,16 +456,10 @@ export default function Home() {
 
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
             {activeDocument && previewMode === "markdown" && (
-              <article className="markdown-preview whitespace-pre-wrap text-sm text-slate-800">
-                {activeDocument.markdown}
-              </article>
+              <article className="markdown-preview whitespace-pre-wrap text-sm text-slate-800">{activeDocument.markdown}</article>
             )}
             {activeDocument && previewMode === "html" && (
-              <iframe
-                title="html-preview"
-                className="h-[420px] w-full rounded bg-white"
-                srcDoc={activeDocument.html}
-              />
+              <iframe title="html-preview" className="h-[520px] w-full rounded bg-white" srcDoc={activeDocument.html} />
             )}
           </div>
 
@@ -267,18 +469,14 @@ export default function Home() {
                 <button
                   type="button"
                   className="rounded-md bg-cyan-700 px-3 py-2 text-xs font-semibold text-white"
-                  onClick={() =>
-                    downloadText(`${activeDocument.name}.md`, activeDocument.markdown, "text/markdown")
-                  }
+                  onClick={() => downloadText(`${activeDocument.name}.md`, activeDocument.markdown, "text/markdown")}
                 >
                   Download Markdown
                 </button>
                 <button
                   type="button"
                   className="rounded-md bg-sky-700 px-3 py-2 text-xs font-semibold text-white"
-                  onClick={() =>
-                    downloadText(`${activeDocument.name}.html`, activeDocument.html, "text/html")
-                  }
+                  onClick={() => downloadText(`${activeDocument.name}.html`, activeDocument.html, "text/html")}
                 >
                   Download HTML
                 </button>
@@ -301,7 +499,18 @@ export default function Home() {
                 Download All (.zip)
               </button>
             )}
+            {sharePath && (
+              <button
+                type="button"
+                className="rounded-md bg-slate-800 px-3 py-2 text-xs font-semibold text-white"
+                onClick={copyShareLink}
+              >
+                Copy public link
+              </button>
+            )}
           </div>
+
+          {sessionId && <p className="mono mt-3 text-xs text-slate-500">session: {sessionId}</p>}
         </section>
       )}
     </main>

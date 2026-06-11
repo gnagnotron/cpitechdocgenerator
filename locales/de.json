@@ -1,0 +1,87 @@
+{
+  "code": "de",
+  "ui": {
+    "appName": "SAP CPI Doc Forge",
+    "headline": "iFlow ZIP to Documentation",
+    "subtitle": "Laden Sie einen SAP Integration Flow ZIP-Export hoch und erzeugen Sie mehrsprachige, template-basierte und optional AI-enhanced Dokumentation.",
+    "tabs": { "generator": "Generierung", "history": "Historie", "templates": "Vorlagen" },
+    "labels": {
+      "upload": "iFlow ZIP hochladen",
+      "generate": "Dokumentation generieren",
+      "generating": "Generierung laeuft...",
+      "language": "Sprache",
+      "mode": "Modus",
+      "deterministic": "Deterministisch",
+      "aiEnhanced": "AI-Enhanced",
+      "preview": "Vorschau",
+      "downloadAll": "Alles herunterladen (.zip)",
+      "downloadMarkdown": "Markdown herunterladen",
+      "downloadHtml": "HTML herunterladen",
+      "shareLink": "Oeffentlichen Link kopieren",
+      "estimatedTime": "Geschaetzte Zeit",
+      "warnings": "Warnungen / Fehler",
+      "historyEmpty": "Keine letzten Sitzungen.",
+      "selectTemplates": "Vorlagen auswaehlen",
+      "recentUploads": "Letzte Uploads",
+      "serverHistory": "Serversitzungen",
+      "localHistory": "Lokale Historie",
+      "aiUnavailable": "AI nicht konfiguriert: automatischer deterministic Fallback.",
+      "qualityGate": "Quality Gate",
+      "shareReady": "Link in Zwischenablage kopiert"
+    },
+    "phases": ["ZIP Upload", "iFlow Validierung", "Deterministisches Parsing", "Template Rendering", "Output Packaging"],
+    "templates": {
+      "technical": "technisches-dokument",
+      "functional": "fachliches-dokument",
+      "handover": "handover-dokument",
+      "audit": "audit-dokument",
+      "training": "training-dokument"
+    },
+    "docFileNames": {
+      "technical": "technisches-dokument",
+      "functional": "fachliches-dokument",
+      "handover": "handover-dokument",
+      "audit": "audit-dokument",
+      "training": "training-dokument"
+    },
+    "languages": { "it": "Italienisch", "en": "Englisch", "fr": "Franzoesisch", "de": "Deutsch" }
+  },
+  "docs": {
+    "sections": {
+      "objective": "1) Ziel des Flows und logische Architektur",
+      "inputs": "2) Eingaben des Flows",
+      "flow": "3) End-to-End Flow",
+      "transformations": "4) Transformationen und Anreicherungen",
+      "mapping": "5) Detailliertes Ziel-Mapping",
+      "xmlCsv": "6) XML-zu-CSV Konvertierung",
+      "output": "7) Finale Ausgabe und Dateinamensgebung",
+      "dependencies": "8) Abhaengigkeiten",
+      "errors": "9) Fehlerbehandlung und Verhalten",
+      "quality": "10) Provenance und Verlaesslichkeit",
+      "references": "11) Nuetzliche Dateikarte",
+      "checklist": "Betriebs-Checkliste",
+      "tests": "Empfohlene Mindesttests",
+      "bestPractices": "Deployment Best Practices",
+      "training": "Wichtige Trainingspunkte"
+    },
+    "labels": {
+      "artifact": "Artifact",
+      "version": "Version",
+      "vendor": "Vendor / bundle",
+      "processes": "Hauptprozesse",
+      "sequence": "Detaillierte operative Sequenz",
+      "references": "Referenzen",
+      "provenance": "Provenance",
+      "confidence": "Confidence"
+    },
+    "text": {
+      "technicalIntro": "Dieser Integration Flow verarbeitet die im Paket erkannten Eingaben und liefert die Ausgabe an die konfigurierten Receiver. Die Logik wird in einer operativen Form dargestellt, um Analyse und Handover zu beschleunigen.",
+      "functionalIntro": "Der Flow uebertraegt Daten vom Quellsystem zum Zielsystem und uebersetzt das Payload in ein nachgelagert nutzbares Format.",
+      "handoverIntro": "Dieser Leitfaden ist fuer Kolleginnen und Kollegen gedacht, die den Flow uebernehmen, ohne ihn entwickelt zu haben.",
+      "auditIntro": "Diese Audit-Sicht sammelt die wichtigsten technischen Nachweise, die Dokumentationsabdeckung und die offenen Risiken.",
+      "trainingIntro": "Diese Trainingszusammenfassung hebt die Mindestpunkte hervor, die an neue Teammitglieder weitergegeben werden sollen.",
+      "flowSummary": "Kompakte Sicht auf den Hauptpfad:",
+      "fallback": "Nicht aus dem ZIP bestimmbar"
+    }
+  }
+}

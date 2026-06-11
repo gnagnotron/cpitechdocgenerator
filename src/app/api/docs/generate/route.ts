@@ -3,78 +3,50 @@ import { toErrorResponse } from "@/lib/errors";
 import { generateFromZipBuffer } from "@/lib/pipeline/generate";
 import { createZipBuffer } from "@/lib/parsers/zip";
 import { createSessionId, saveSession } from "@/lib/session-store";
+import type { PublicGenerateRequest } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
-    const file = formData.get("file");
-    const language = formData.get("language");
-    const mode = formData.get("mode");
-    const templateIds = formData.getAll("templateIds").filter((value): value is string => typeof value === "string");
-
-    if (!(file instanceof File)) {
+    const body = (await request.json()) as PublicGenerateRequest;
+    if (!body?.zipBase64) {
       return NextResponse.json(
         {
           error: {
-            code: "MISSING_FILE",
-            message: "Nessun file caricato.",
-            suggestion: "Carica un file .zip di SAP iFlow.",
+            code: "MISSING_ZIP_BASE64",
+            message: "zipBase64 is required.",
+            suggestion: "Provide a base64 encoded SAP iFlow ZIP.",
           },
         },
         { status: 400 },
       );
     }
 
-    if (!file.name.toLowerCase().endsWith(".zip")) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "INVALID_FILE_TYPE",
-            message: "Formato file non supportato.",
-            suggestion: "Carica un file con estensione .zip.",
-          },
-        },
-        { status: 400 },
-      );
-    }
-
-    const zipBuffer = Buffer.from(await file.arrayBuffer());
     const sessionId = createSessionId();
+    const zipBuffer = Buffer.from(body.zipBase64, "base64");
     const result = await generateFromZipBuffer(zipBuffer, {
-      language: typeof language === "string" ? (language as "it" | "en" | "fr" | "de") : undefined,
-      mode: typeof mode === "string" ? (mode as "deterministic" | "ai-enhanced") : undefined,
-      templateIds: templateIds.length ? (templateIds as Array<"technical" | "functional" | "handover" | "audit" | "training">) : undefined,
-      sourceFileName: file.name,
+      language: body.language,
+      templateIds: body.templateIds,
+      mode: body.mode,
       sessionId,
+      sourceFileName: "api-upload.zip",
     });
 
-    const allFiles: Array<{ fileName: string; content: string }> = [
-      {
-        fileName: "canonical-model.json",
-        content: JSON.stringify(result.canonicalModel, null, 2),
-      },
-      {
-        fileName: "flow-graph.json",
-        content: JSON.stringify(result.flowGraph, null, 2),
-      },
-      {
-        fileName: "quality-gate-report.json",
-        content: JSON.stringify(result.qualityGate, null, 2),
-      },
+    const outputZip = createZipBuffer([
+      { fileName: "canonical-model.json", content: JSON.stringify(result.canonicalModel, null, 2) },
+      { fileName: "flow-graph.json", content: JSON.stringify(result.flowGraph, null, 2) },
+      { fileName: "quality-gate-report.json", content: JSON.stringify(result.qualityGate, null, 2) },
       ...result.documents.flatMap((doc) => [
         { fileName: `${doc.name}.md`, content: doc.markdown },
         { fileName: `${doc.name}.html`, content: doc.html },
       ]),
-    ];
-
-    const outputZip = createZipBuffer(allFiles);
+    ]);
 
     await saveSession({
       id: sessionId,
       createdAt: new Date().toISOString(),
-      fileName: file.name,
+      fileName: "api-upload.zip",
       language: result.locale,
       mode: result.mode,
       templateIds: result.selectedTemplateIds,

@@ -1,0 +1,87 @@
+{
+  "code": "fr",
+  "ui": {
+    "appName": "SAP CPI Doc Forge",
+    "headline": "iFlow ZIP to Documentation",
+    "subtitle": "Chargez un export ZIP SAP Integration Flow et generez une documentation multi-modele, multi-langue, avec option AI-enhanced.",
+    "tabs": { "generator": "Generation", "history": "Historique", "templates": "Modeles" },
+    "labels": {
+      "upload": "Charger le ZIP iFlow",
+      "generate": "Generer la documentation",
+      "generating": "Generation en cours...",
+      "language": "Langue",
+      "mode": "Mode",
+      "deterministic": "Deterministe",
+      "aiEnhanced": "AI-Enhanced",
+      "preview": "Apercu",
+      "downloadAll": "Telecharger tout (.zip)",
+      "downloadMarkdown": "Telecharger Markdown",
+      "downloadHtml": "Telecharger HTML",
+      "shareLink": "Copier le lien public",
+      "estimatedTime": "Temps estime",
+      "warnings": "Avertissements / Erreurs",
+      "historyEmpty": "Aucune session recente.",
+      "selectTemplates": "Selectionner les modeles",
+      "recentUploads": "Uploads recents",
+      "serverHistory": "Sessions serveur",
+      "localHistory": "Historique local",
+      "aiUnavailable": "AI non configuree: retour deterministic automatique.",
+      "qualityGate": "Quality gate",
+      "shareReady": "Lien copie dans le presse-papiers"
+    },
+    "phases": ["Upload zip", "Validation iFlow", "Parsing deterministe", "Rendu template", "Packaging"],
+    "templates": {
+      "technical": "document-technique",
+      "functional": "document-fonctionnel",
+      "handover": "document-handover",
+      "audit": "document-audit",
+      "training": "document-formation"
+    },
+    "docFileNames": {
+      "technical": "document-technique",
+      "functional": "document-fonctionnel",
+      "handover": "document-handover",
+      "audit": "document-audit",
+      "training": "document-formation"
+    },
+    "languages": { "it": "Italien", "en": "Anglais", "fr": "Francais", "de": "Allemand" }
+  },
+  "docs": {
+    "sections": {
+      "objective": "1) Objectif du flux et architecture logique",
+      "inputs": "2) Entrees du flux",
+      "flow": "3) Flux end-to-end",
+      "transformations": "4) Transformations et enrichissements",
+      "mapping": "5) Mapping detaille vers la cible",
+      "xmlCsv": "6) Conversion XML -> CSV",
+      "output": "7) Sortie finale et nommage fichier",
+      "dependencies": "8) Dependances",
+      "errors": "9) Gestion des erreurs et comportement",
+      "quality": "10) Provenance et fiabilite",
+      "references": "11) Carte des fichiers utiles",
+      "checklist": "Checklist operationnelle",
+      "tests": "Tests minimum recommandes",
+      "bestPractices": "Bonnes pratiques de deploiement",
+      "training": "Points cles pour la formation"
+    },
+    "labels": {
+      "artifact": "Artifact",
+      "version": "Version",
+      "vendor": "Vendor / bundle",
+      "processes": "Processus principaux",
+      "sequence": "Sequence operationnelle detaillee",
+      "references": "References",
+      "provenance": "Provenance",
+      "confidence": "Confidence"
+    },
+    "text": {
+      "technicalIntro": "Ce flux recoit les entrees detectees dans le package et produit une sortie vers les receivers configures. La logique est presentee sous forme operationnelle pour faciliter l'analyse et le handover.",
+      "functionalIntro": "Le flux transfere les donnees du systeme source vers la cible en traduisant le payload dans un format exploitable en aval.",
+      "handoverIntro": "Ce guide est concu pour une personne qui reprend le flux sans l'avoir developpe. Les sections privilegient la comprehension rapide et le support run.",
+      "auditIntro": "Cette vue audit rassemble les evidences techniques majeures, la couverture documentaire et les points d'attention.",
+      "trainingIntro": "Cette synthese formation met en avant les notions minimales a transmettre a un nouveau collegue.",
+      "flowSummary": "Vue synthetique du parcours principal:",
+      "fallback": "Non determinable depuis le ZIP"
+    }
+  }
+}

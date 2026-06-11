@@ -1,0 +1,63 @@
+# {{title}}
+
+## {{sections.objective}}
+{{intro}}
+
+{{labels.artifact}}: {{artifact.name}}
+{{labels.version}}: {{artifact.version}}
+{{labels.vendor}}: {{artifact.vendor}}
+
+### {{labels.processes}}
+{{#each processes}}- {{this}}
+{{/each}}
+
+## {{sections.inputs}}
+{{#each inputs}}- {{this}}
+{{/each}}
+
+## {{sections.endToEnd}}
+{{flowSummary}}
+
+```mermaid
+{{mermaid}}
+```
+
+{{labels.sequence}}
+{{#each sequence}}
+{{this}}
+{{/each}}
+
+## {{sections.transformations}}
+{{#each transformations}}- {{this}}
+{{/each}}
+
+## {{sections.mapping}}
+{{#each mapping}}- {{this}}
+{{/each}}
+
+## {{sections.xmlCsv}}
+{{#each xmlCsv}}- {{this}}
+{{/each}}
+
+## {{sections.output}}
+{{#each output}}- {{this}}
+{{/each}}
+
+## {{sections.dependencies}}
+{{#each dependencies}}- {{this}}
+{{/each}}
+{{#each parameters}}- {{../labels.parameter}}: {{this}}
+{{/each}}
+
+## {{sections.errorHandling}}
+{{#each errorHandling}}- {{this}}
+{{/each}}
+
+## {{sections.reliability}}
+- {{labels.provenance}}: {{provenance}}
+- {{labels.confidence}}: {{confidence}}
+- {{labels.gap}}: {{gaps}}
+
+## {{sections.files}}
+{{#each references}}- {{this}}
+{{/each}}

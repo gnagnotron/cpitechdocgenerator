@@ -9,3 +9,14 @@ export const logWarning = (warning: StructuredWarning) => {
     }),
   );
 };
+
+export const logAIEvent = (event: Record<string, unknown>) => {
+  console.info(
+    JSON.stringify({
+      level: "info",
+      ts: new Date().toISOString(),
+      kind: "ai-audit",
+      ...event,
+    }),
+  );
+};

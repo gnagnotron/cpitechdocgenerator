@@ -1,15 +1,24 @@
 import { AppError } from "../errors.ts";
+import { AIDocumentEnhancer } from "../ai-enhancer.ts";
+import { getLocaleMessages } from "../locales/index.ts";
 import { logWarning } from "../logger.ts";
 import { parseIflw } from "../parsers/iflw.ts";
 import { parseMmap } from "../parsers/mmap.ts";
 import { parseManifest, parseParameterDefinitions, parseProperties } from "../parsers/text.ts";
 import { readZipEntries } from "../parsers/zip.ts";
 import { fileParserPlugins } from "../plugins/registry.ts";
+import { defaultTemplateIds } from "../templates/definitions.ts";
+import { compileTemplate } from "../templates/registry.ts";
 import type {
   CanonicalModel,
+  DocumentTemplateId,
   FlowGraph,
+  GenerateDocumentsOptions,
+  GenerationMode,
   GeneratedDocument,
   GenerationResult,
+  LanguageCode,
+  LocaleMessages,
   ParsedZipArtifacts,
   QualityGateReport,
   StructuredWarning,
@@ -306,18 +315,24 @@ const buildMermaidFlow = (model: CanonicalModel) => {
   return ["flowchart LR", ...lines].join("\n");
 };
 
-const renderReferences = (parsed: ParsedZipArtifacts) => {
+const renderReferences = (parsed: ParsedZipArtifacts, artifactName: string) => {
   const refs = unique([
     "META-INF/MANIFEST.MF",
     "metainfo.prop",
-    ...parsed.iflows.map((iflow) => `integrationflow/${iflow.name || iflow.id}.iflw`),
-    ...parsed.mmaps.map((mapping) => `mapping/${mapping.name}.mmap`),
+    ...parsed.iflows.map((iflow, index) => {
+      const baseName =
+        isMeaningful(iflow.name) ? iflow.name : isMeaningful(artifactName) ? artifactName : `integration-flow-${index + 1}`;
+      return `integrationflow/${baseName}.iflw`;
+    }),
+    ...parsed.mmaps.map((mapping) => `mapping/${mapping.name.replace(/\.mmap$/i, "")}.mmap`),
     ...parsed.xsds.map((xsd) => xsd.fileName),
     ...parsed.groovyScripts,
   ]);
 
   return refs.length > 0 ? refs.slice(0, 15).map((ref) => `- ${ref}`) : ["- Non determinabile da zip"];
 };
+
+const stripListPrefix = (value: string) => value.replace(/^[-\d.\s]+/, "").trim();
 
 const markdownToHtml = (markdown: string) => {
   const lines = markdown.split("\n");
@@ -612,7 +627,7 @@ const buildCanonicalModel = (parsed: ParsedZipArtifacts): CanonicalModel => {
   };
 };
 
-const createDocuments = (parsed: ParsedZipArtifacts, model: CanonicalModel): GeneratedDocument[] => {
+const buildTemplateContext = (parsed: ParsedZipArtifacts, model: CanonicalModel, locale: LocaleMessages) => {
   const ingressi = describeInputs(parsed, model);
   const trasformazioni = describeTransformations(parsed, model);
   const mapping = describeMappingDetails(parsed);
@@ -622,138 +637,101 @@ const createDocuments = (parsed: ParsedZipArtifacts, model: CanonicalModel): Gen
   const parametri = describeParameters(parsed);
   const dipendenze = describeFiles(parsed);
   const sequence = model.stepERouting.data.slice(0, 20).map((step, index) => `${index + 1}. ${step.step} -> ${step.route}`);
-  const references = renderReferences(parsed);
+  const references = renderReferences(parsed, model.artifact.data.name);
   const mermaid = buildMermaidFlow(model);
 
-  const technicalMd = [
-    `# ${model.artifact.data.name} - Documento Tecnico`,
-    "## 1) Obiettivo del flusso e architettura logica",
-    `Questo Integration Flow riceve input dai canali ${ingressi.join("; ")} e produce output verso i receiver configurati nel package. La logica è estratta in modo deterministico dal contenuto dello zip, ma raccontata in forma operativa per facilitare il passaggio di consegne.`,
-    `Artifact: ${model.artifact.data.name}`,
-    `Versione: ${model.artifact.data.version}`,
-    `Vendor / bundle: ${model.artifact.data.vendor}`,
-    "### Processi principali",
-    ...model.processi.data.map((process) => `- Processo: ${process}`),
-    "## 2) Ingressi del flusso",
-    "Questa sezione descrive cosa entra davvero nel flusso e come può essere attivato in runtime.",
-    ...ingressi.map((input) => `- Input: ${input}`),
-    "## 3) Flusso end-to-end",
-    "Vista sintetica del percorso principale:",
-    "```mermaid",
+  return {
+    sections: locale.docs.sections,
+    labels: locale.docs.labels,
+    artifact: model.artifact.data,
+    inputs: ingressi,
+    transformations: trasformazioni,
+    mapping,
+    xmlCsv,
+    output,
+    errorHandling: errori,
+    parameters: parametri,
+    dependencies: dipendenze,
+    sequence,
+    references,
     mermaid,
-    "```",
-    "Sequenza operativa dettagliata:",
-    ...sequence,
-    "## 4) Trasformazioni e arricchimenti",
-    "Qui sono elencati mapping, script e passaggi che alterano il payload o arricchiscono il contesto.",
-    ...trasformazioni.map((item) => `- ${item}`),
-    "## 5) Mapping dettagliato verso target",
-    ...mapping.map((item) => `- ${item}`),
-    "## 6) Conversione XML -> CSV",
-    ...xmlCsv.map((item) => `- ${item}`),
-    "## 7) Output finale e naming file",
-    ...output.map((item) => `- ${item}`),
-    "## 8) Dipendenze",
-    ...dipendenze.map((item) => `- ${item}`),
-    ...parametri.map((item) => `- Parametro: ${item}`),
-    "## 9) Gestione errori e comportamento",
-    ...errori.map((item) => `- ${item}`),
-    "## 10) Provenance e affidabilità",
-    `- Provenance: ${model.artifact.provenance}`,
-    `- Provenance complessiva: ${model.processi.provenance}`,
-    `- Confidence media delle sezioni chiave: ${((model.ingressi.confidence + model.mappingERegole.confidence + model.output.confidence) / 3).toFixed(2)}`,
-    `- Gap residui: ${model.assunzioniEGap.data.join("; ")}`,
-    "## 11) Mappa file utili",
-    ...references,
-  ].join("\n");
+    processes: model.processi.data,
+    provenance: model.artifact.provenance,
+    confidence: ((model.ingressi.confidence + model.mappingERegole.confidence + model.output.confidence) / 3).toFixed(2),
+    gaps: model.assunzioniEGap.data.join("; "),
+    gapsList: model.assunzioniEGap.data,
+    qualityScore: ((model.ingressi.confidence + model.processi.confidence + model.output.confidence) / 3).toFixed(2),
+    warningsSummary: parsed.warnings.length ? parsed.warnings.map((warning) => warning.code).join(", ") : "none",
+    checklist: [
+      "Verificare ingressi JMS e HTTPS/manuale nel package.",
+      "Leggere la sequenza end-to-end e identificare il punto di decisione principale.",
+      "Verificare mapping principale, script custom e schemi XSD.",
+      "Verificare i parametri runtime e mascherare i valori sensibili prima di condividerli.",
+      "Verificare il receiver interno ProcessDirect o il canale finale equivalente.",
+    ],
+    tests: [
+      "Un caso nominale con payload valido.",
+      "Un caso con payload vuoto o non valido per verificare il ramo di controllo.",
+      "Verifica mapping campi e conversione XML/CSV sui record principali.",
+      "Verifica che gli output generati contengano input, trasformazioni, arricchimenti e destinazione finale.",
+    ],
+    bestPractices: [
+      "Verificare variabili ambiente e parametri prima del deploy.",
+      "Confrontare quality gate e warnings prima di condividere il documento.",
+      "Identificare il consumer finale di eventuali ProcessDirect interni.",
+    ],
+    flowSummary: locale.docs.text.flowSummary ?? "Vista sintetica del percorso principale:",
+  };
+};
 
-  const functionalMd = [
-    `# ${model.artifact.data.name} - Documento Funzionale`,
-    "## 1. Obiettivo business",
-    `Il flusso trasferisce dati dal sistema sorgente al target traducendo il payload in un formato utilizzabile a valle. L'obiettivo non è solo tecnico: garantire coerenza del dato e prevedibilità del comportamento operativo.`,
-    "## 2. Ingressi funzionali",
-    ...ingressi.map((input) => `- ${input}`),
-    "## 3. Comportamento funzionale",
-    "Dal punto di vista business, il flusso valida la presenza del contenuto utile e decide se proseguire o chiudere il processo.",
-    ...model.processi.data.map((process) => `- ${process}`),
-    "Passi principali (lettura rapida):",
-    ...sequence.slice(0, 12),
-    "## 4. Trasformazioni e arricchimenti",
-    ...trasformazioni.map((item) => `- ${item}`),
-    "## 5. Mapping verso target (vista funzionale)",
-    ...mapping.map((item) => `- ${item}`),
-    "## 6. Conversione XML -> CSV (vista funzionale)",
-    ...xmlCsv.map((item) => `- ${item}`),
-    "## 7. Output funzionale",
-    ...output.map((item) => `- ${item}`),
-    "## 7. Cosa deve sapere chi prende in carico il flusso",
-    "- Le dipendenze esterne e i parametri runtime sono documentati e possono cambiare in base all'ambiente.",
-    "- La presenza di controlli su payload vuoto impatta i volumi realmente inoltrati.",
-    "- Se manca un file critico il flusso viene considerato non documentabile e la pipeline si ferma con errore esplicito.",
-    "- Le sezioni incerte riportano sempre 'Non determinabile da zip'.",
-    "## 8. Affidabilità e completezza",
-    `- Provenance: ${model.artifact.provenance}`,
-    `- Provenance funzionale: ${model.artifact.provenance}`,
-    `- Confidence media: ${((model.ingressi.confidence + model.arricchimenti.confidence + model.output.confidence) / 3).toFixed(2)}`,
-    "## 9. Riferimenti per approfondimento",
-    ...references,
-  ].join("\n");
+const createDocuments = async (
+  parsed: ParsedZipArtifacts,
+  model: CanonicalModel,
+  language: LanguageCode,
+  templateIds: DocumentTemplateId[],
+  mode: GenerationMode,
+): Promise<{ documents: GeneratedDocument[]; aiReport: GenerationResult["aiReport"] }> => {
+  const locale = getLocaleMessages(language);
+  const context = buildTemplateContext(parsed, model, locale);
 
-  const handoverMd = [
-    `# ${model.artifact.data.name} - Documento Handover / Onboarding`,
-    "## 1) Obiettivo del flusso e architettura logica",
-    "Questa guida e pensata per chi prende in carico il flusso senza averlo sviluppato. Le informazioni sono ordinate per passare rapidamente da comprensione a operativita.",
-    `Artifact: ${model.artifact.data.name}`,
-    `Versione: ${model.artifact.data.version}`,
-    ...model.processi.data.map((process) => `- Processo: ${process}`),
-    "## 2) Ingressi (es. JMS + HTTPS manuale)",
-    ...ingressi.map((input) => `- ${input}`),
-    "## 3) Trasformazioni e arricchimenti",
-    ...trasformazioni.map((item) => `- ${item}`),
-    "## 4) Mapping dettagliato dei campi verso target",
-    ...mapping.map((item) => `- ${item}`),
-    "## 5) Conversione XML -> CSV",
-    ...xmlCsv.map((item) => `- ${item}`),
-    "## 6) Output finale e naming file",
-    ...output.map((item) => `- ${item}`),
-    "## 7) Dipendenze (script, ProcessDirect, mapping)",
-    ...dipendenze.map((item) => `- ${item}`),
-    ...parametri.map((item) => `- ${item}`),
-    "## 8) Checklist operativa",
-    "- Verificare ingressi JMS e HTTPS/manuale nel package.",
-    "- Leggere la sequenza end-to-end e identificare il punto di decisione principale (gateway/condition).",
-    "- Verificare mapping principale, script custom e schemi XSD.",
-    "- Verificare i parametri runtime e mascherare i valori sensibili prima di condividerli.",
-    "- Verificare il receiver interno ProcessDirect o il canale finale equivalente.",
-    "## 9) Sequenza operativa da leggere in iFlow",
-    "```mermaid",
-    mermaid,
-    "```",
-    ...sequence,
-    "## 10) Open points e gap",
-    ...model.assunzioniEGap.data.map((gap) => `- ${gap}`),
-    "## 11) Test minimi consigliati",
-    "- Un caso nominale con payload valido.",
-    "- Un caso con payload vuoto o non valido per verificare il ramo di controllo.",
-    "- Verifica mapping campi e conversione XML/CSV sui record principali.",
-    "- Verifica che gli output generati contengano input, trasformazioni, arricchimenti e destinazione finale.",
-    "## 12) Provenance e affidabilità",
-    `- Provenance: ${model.artifact.provenance}`,
-    "## 13) Mappa file utili",
-    ...references,
-  ].join("\n");
+  const introByTemplate: Record<DocumentTemplateId, string> = {
+    technical: locale.docs.text.technicalIntro,
+    functional: locale.docs.text.functionalIntro,
+    handover: locale.docs.text.handoverIntro,
+    audit: locale.docs.text.auditIntro,
+    training: locale.docs.text.trainingIntro,
+  };
 
-  const docs: Array<{ name: string; markdown: string }> = [
-    { name: "documento-tecnico", markdown: technicalMd },
-    { name: "documento-funzionale", markdown: functionalMd },
-    { name: "documento-handover", markdown: handoverMd },
-  ];
+  const documents = templateIds.map((templateId) => {
+    const template = compileTemplate(templateId);
+    const title = `${model.artifact.data.name} - ${locale.ui.templates[templateId]}`;
+    const markdown = template({
+      ...context,
+      title,
+      intro: introByTemplate[templateId].replace("{{inputs}}", context.inputs.join("; ") || "n/a"),
+    });
 
-  return docs.map((d) => ({
-    name: d.name,
-    markdown: d.markdown,
-    html: markdownToHtml(d.markdown),
-  }));
+    return {
+      name: locale.ui.docFileNames[templateId],
+      markdown,
+      html: markdownToHtml(markdown),
+      templateId,
+      displayName: locale.ui.templates[templateId],
+      language,
+      mode,
+    } satisfies GeneratedDocument;
+  });
+
+  const enhancer = new AIDocumentEnhancer();
+  const enhanced = await enhancer.enhanceDocuments(documents, locale, language, mode);
+
+  return {
+    documents: enhanced.documents.map((document) => ({
+      ...document,
+      html: markdownToHtml(document.markdown),
+    })),
+    aiReport: enhanced.report,
+  };
 };
 
 const buildFlowGraph = (parsed: ParsedZipArtifacts): FlowGraph => {
@@ -814,44 +792,43 @@ const buildFlowGraph = (parsed: ParsedZipArtifacts): FlowGraph => {
   };
 };
 
-const evaluateQualityGate = (documents: GeneratedDocument[], model: CanonicalModel): QualityGateReport => {
+const evaluateQualityGate = (
+  documents: GeneratedDocument[],
+  model: CanonicalModel,
+  selectedTemplateIds: DocumentTemplateId[],
+): QualityGateReport => {
   const checks: QualityGateReport["checks"] = [];
 
-  const byName = (name: string) => documents.find((document) => document.name === name)?.markdown ?? "";
-  const technical = byName("documento-tecnico");
-  const functional = byName("documento-funzionale");
-  const handover = byName("documento-handover");
+  const byTemplate = (templateId: DocumentTemplateId) =>
+    documents.find((document) => document.templateId === templateId)?.markdown ?? "";
+  const technical = byTemplate("technical");
+  const functional = byTemplate("functional");
+  const handover = byTemplate("handover");
 
   checks.push({
     id: "docs_presence",
-    passed: Boolean(technical && functional && handover),
-    message: "Tutti e 3 i documenti devono essere generati.",
+    passed: selectedTemplateIds.every((templateId) => Boolean(byTemplate(templateId))),
+    message: "Tutti i documenti selezionati devono essere generati.",
   });
 
-  const requiredTechnical = [
-    "Obiettivo del flusso",
-    "Ingressi del flusso",
-    "Trasformazioni e arricchimenti",
-    "Mapping dettagliato",
-    "Conversione XML -> CSV",
-    "Output finale e naming file",
-  ];
+  const headingCount = (markdown: string) => (markdown.match(/^##\s+/gm) ?? []).length;
+
   checks.push({
     id: "technical_sections",
-    passed: requiredTechnical.every((section) => technical.includes(section)),
+    passed: !selectedTemplateIds.includes("technical") || headingCount(technical) >= 6,
     message: "Il documento tecnico deve contenere le sezioni minime richieste.",
   });
 
-  const requiredHandover = [
-    "Checklist operativa",
-    "Test minimi consigliati",
-    "Ingressi (es. JMS + HTTPS manuale)",
-    "Output finale e naming file",
-  ];
   checks.push({
     id: "handover_sections",
-    passed: requiredHandover.every((section) => handover.includes(section)),
+    passed: !selectedTemplateIds.includes("handover") || headingCount(handover) >= 5,
     message: "Il documento handover deve contenere checklist, test e sezioni operative.",
+  });
+
+  checks.push({
+    id: "functional_sections",
+    passed: !selectedTemplateIds.includes("functional") || Boolean(functional),
+    message: "Il documento funzionale deve essere valorizzato quando selezionato.",
   });
 
   checks.push({
@@ -874,12 +851,18 @@ const evaluateQualityGate = (documents: GeneratedDocument[], model: CanonicalMod
   };
 };
 
-export const generateFromZipBuffer = (zipBuffer: Buffer): GenerationResult => {
+export const generateFromZipBuffer = async (
+  zipBuffer: Buffer,
+  options: GenerateDocumentsOptions = {},
+): Promise<GenerationResult> => {
   const parsed = parseZipArtifacts(zipBuffer);
   const canonicalModel = buildCanonicalModel(parsed);
-  const documents = createDocuments(parsed, canonicalModel);
+  const locale = options.language ?? "it";
+  const mode = options.mode ?? "deterministic";
+  const selectedTemplateIds = options.templateIds?.length ? options.templateIds : defaultTemplateIds;
+  const { documents, aiReport } = await createDocuments(parsed, canonicalModel, locale, selectedTemplateIds, mode);
   const flowGraph = buildFlowGraph(parsed);
-  const qualityGate = evaluateQualityGate(documents, canonicalModel);
+  const qualityGate = evaluateQualityGate(documents, canonicalModel, selectedTemplateIds);
 
   if (!qualityGate.passed) {
     throw new AppError(
@@ -896,5 +879,9 @@ export const generateFromZipBuffer = (zipBuffer: Buffer): GenerationResult => {
     warnings: parsed.warnings,
     flowGraph,
     qualityGate,
+    locale,
+    mode,
+    selectedTemplateIds,
+    aiReport,
   };
 };

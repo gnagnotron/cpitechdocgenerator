@@ -107,6 +107,94 @@ export interface GeneratedDocument {
   name: string;
   markdown: string;
   html: string;
+  templateId?: DocumentTemplateId;
+  displayName?: string;
+  language?: LanguageCode;
+  mode?: GenerationMode;
+}
+
+export type LanguageCode = "it" | "en" | "fr" | "de";
+
+export type GenerationMode = "deterministic" | "ai-enhanced";
+
+export type DocumentTemplateId =
+  | "technical"
+  | "functional"
+  | "handover"
+  | "audit"
+  | "training";
+
+export interface TemplateDefinition {
+  id: DocumentTemplateId;
+  outputName: string;
+  defaultSelected: boolean;
+  estimatedSeconds: number;
+  aiEnhanceable: boolean;
+  requiredHeadings: string[];
+}
+
+export interface LocaleMessages {
+  code: LanguageCode;
+  ui: {
+    appName: string;
+    headline: string;
+    subtitle: string;
+    tabs: Record<string, string>;
+    labels: Record<string, string>;
+    phases: string[];
+    templates: Record<DocumentTemplateId, string>;
+    docFileNames: Record<DocumentTemplateId, string>;
+    languages: Record<LanguageCode, string>;
+  };
+  docs: {
+    sections: Record<string, string>;
+    labels: Record<string, string>;
+    text: Record<string, string>;
+  };
+}
+
+export interface GeneratedSessionMeta {
+  id: string;
+  createdAt: string;
+  fileName: string;
+  language: LanguageCode;
+  mode: GenerationMode;
+  templateIds: DocumentTemplateId[];
+  aiUsed: boolean;
+  sharePath: string;
+}
+
+export interface SessionRecord extends GeneratedSessionMeta {
+  warnings: StructuredWarning[];
+  canonicalModel: CanonicalModel;
+  flowGraph: FlowGraph;
+  qualityGate: QualityGateReport;
+  documents: GeneratedDocument[];
+}
+
+export interface GenerateDocumentsOptions {
+  language?: LanguageCode;
+  templateIds?: DocumentTemplateId[];
+  mode?: GenerationMode;
+  sessionId?: string;
+  sourceFileName?: string;
+}
+
+export interface AIEnhancementReport {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  fallbackReason?: string;
+  durationMs: number;
+  promptTokensApprox: number;
+  completionTokensApprox: number;
+}
+
+export interface PublicGenerateRequest {
+  zipBase64: string;
+  language?: LanguageCode;
+  templateIds?: DocumentTemplateId[];
+  mode?: GenerationMode;
 }
 
 export interface FlowGraph {
@@ -152,4 +240,8 @@ export interface GenerationResult {
   warnings: StructuredWarning[];
   flowGraph: FlowGraph;
   qualityGate: QualityGateReport;
+  locale: LanguageCode;
+  mode: GenerationMode;
+  selectedTemplateIds: DocumentTemplateId[];
+  aiReport: AIEnhancementReport;
 }

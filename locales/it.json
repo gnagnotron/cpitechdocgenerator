@@ -1,0 +1,102 @@
+{
+  "code": "it",
+  "ui": {
+    "appName": "SAP CPI Doc Forge",
+    "headline": "iFlow ZIP to Documentation",
+    "subtitle": "Carica un export ZIP di SAP Integration Flow e genera documenti multi-template, multi-lingua e opzionalmente AI-enhanced.",
+    "tabs": {
+      "generator": "Generazione",
+      "history": "Cronologia",
+      "templates": "Template"
+    },
+    "labels": {
+      "upload": "Carica ZIP iFlow",
+      "generate": "Genera documentazione",
+      "generating": "Generazione in corso...",
+      "language": "Lingua",
+      "mode": "Modalita",
+      "deterministic": "Deterministic",
+      "aiEnhanced": "AI-Enhanced",
+      "preview": "Anteprima",
+      "downloadAll": "Download All (.zip)",
+      "downloadMarkdown": "Download Markdown",
+      "downloadHtml": "Download HTML",
+      "shareLink": "Copia link pubblico",
+      "estimatedTime": "Tempo stimato",
+      "warnings": "Warning / Errori",
+      "historyEmpty": "Nessuna sessione recente.",
+      "selectTemplates": "Seleziona template",
+      "recentUploads": "Upload recenti",
+      "serverHistory": "Sessioni server",
+      "localHistory": "Cronologia locale",
+      "aiUnavailable": "AI non configurata: fallback deterministic automatico.",
+      "qualityGate": "Quality gate",
+      "shareReady": "Link copiato negli appunti"
+    },
+    "phases": [
+      "Upload zip",
+      "Validazione struttura iFlow",
+      "Parsing deterministico",
+      "Render template",
+      "Packaging output"
+    ],
+    "templates": {
+      "technical": "documento-tecnico",
+      "functional": "documento-funzionale",
+      "handover": "documento-handover",
+      "audit": "documento-audit",
+      "training": "documento-training"
+    },
+    "docFileNames": {
+      "technical": "documento-tecnico",
+      "functional": "documento-funzionale",
+      "handover": "documento-handover",
+      "audit": "documento-audit",
+      "training": "documento-training"
+    },
+    "languages": {
+      "it": "Italiano",
+      "en": "English",
+      "fr": "Francais",
+      "de": "Deutsch"
+    }
+  },
+  "docs": {
+    "sections": {
+      "objective": "1) Obiettivo del flusso e architettura logica",
+      "inputs": "2) Ingressi del flusso",
+      "flow": "3) Flusso end-to-end",
+      "transformations": "4) Trasformazioni e arricchimenti",
+      "mapping": "5) Mapping dettagliato verso target",
+      "xmlCsv": "6) Conversione XML -> CSV",
+      "output": "7) Output finale e naming file",
+      "dependencies": "8) Dipendenze",
+      "errors": "9) Gestione errori e comportamento",
+      "quality": "10) Provenance e affidabilita",
+      "references": "11) Mappa file utili",
+      "checklist": "Checklist operativa",
+      "tests": "Test minimi consigliati",
+      "bestPractices": "Best practice di deploy",
+      "training": "Punti chiave per training"
+    },
+    "labels": {
+      "artifact": "Artifact",
+      "version": "Versione",
+      "vendor": "Vendor / bundle",
+      "processes": "Processi principali",
+      "sequence": "Sequenza operativa dettagliata",
+      "references": "Riferimenti",
+      "provenance": "Provenance",
+      "confidence": "Confidence"
+    },
+    "text": {
+      "technicalIntro": "Questo Integration Flow riceve input dai canali rilevati nel package e produce output verso i receiver configurati. La logica e documentata in forma operativa per facilitare analisi e handover.",
+      "functionalIntro": "Il flusso trasferisce dati dal sistema sorgente al target traducendo il payload in un formato utilizzabile a valle e governando i casi di eccezione piu comuni.",
+      "handoverIntro": "Questa guida e pensata per chi prende in carico il flusso senza averlo sviluppato. Le sezioni sono ordinate per accelerare onboarding, troubleshooting e passaggio di consegne.",
+      "auditIntro": "Questa vista audit raccoglie le evidenze tecniche principali, la copertura documentale e i punti di attenzione per compliance e manutenzione.",
+      "trainingIntro": "Questa sintesi training evidenzia i concetti minimi da trasferire a un nuovo collega per comprendere il comportamento del flusso.",
+      "flowSummary": "Vista sintetica del percorso principale:",
+      "fallback": "Non determinabile da zip"
+    }
+  }
+}

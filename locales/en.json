@@ -1,0 +1,102 @@
+{
+  "code": "en",
+  "ui": {
+    "appName": "SAP CPI Doc Forge",
+    "headline": "iFlow ZIP to Documentation",
+    "subtitle": "Upload a SAP Integration Flow ZIP export and generate multi-template, multi-language, optionally AI-enhanced documentation.",
+    "tabs": {
+      "generator": "Generator",
+      "history": "History",
+      "templates": "Templates"
+    },
+    "labels": {
+      "upload": "Upload iFlow ZIP",
+      "generate": "Generate documentation",
+      "generating": "Generating...",
+      "language": "Language",
+      "mode": "Mode",
+      "deterministic": "Deterministic",
+      "aiEnhanced": "AI-Enhanced",
+      "preview": "Preview",
+      "downloadAll": "Download All (.zip)",
+      "downloadMarkdown": "Download Markdown",
+      "downloadHtml": "Download HTML",
+      "shareLink": "Copy public link",
+      "estimatedTime": "Estimated time",
+      "warnings": "Warnings / Errors",
+      "historyEmpty": "No recent sessions.",
+      "selectTemplates": "Select templates",
+      "recentUploads": "Recent uploads",
+      "serverHistory": "Server sessions",
+      "localHistory": "Local history",
+      "aiUnavailable": "AI not configured: deterministic fallback will be used.",
+      "qualityGate": "Quality gate",
+      "shareReady": "Link copied to clipboard"
+    },
+    "phases": [
+      "ZIP upload",
+      "iFlow validation",
+      "Deterministic parsing",
+      "Template rendering",
+      "Output packaging"
+    ],
+    "templates": {
+      "technical": "technical-document",
+      "functional": "functional-document",
+      "handover": "handover-document",
+      "audit": "audit-document",
+      "training": "training-document"
+    },
+    "docFileNames": {
+      "technical": "technical-document",
+      "functional": "functional-document",
+      "handover": "handover-document",
+      "audit": "audit-document",
+      "training": "training-document"
+    },
+    "languages": {
+      "it": "Italian",
+      "en": "English",
+      "fr": "French",
+      "de": "German"
+    }
+  },
+  "docs": {
+    "sections": {
+      "objective": "1) Flow objective and logical architecture",
+      "inputs": "2) Flow inputs",
+      "flow": "3) End-to-end flow",
+      "transformations": "4) Transformations and enrichments",
+      "mapping": "5) Detailed target mapping",
+      "xmlCsv": "6) XML to CSV conversion",
+      "output": "7) Final output and file naming",
+      "dependencies": "8) Dependencies",
+      "errors": "9) Error handling and behavior",
+      "quality": "10) Provenance and reliability",
+      "references": "11) Useful file map",
+      "checklist": "Operational checklist",
+      "tests": "Recommended minimum tests",
+      "bestPractices": "Deployment best practices",
+      "training": "Training key points"
+    },
+    "labels": {
+      "artifact": "Artifact",
+      "version": "Version",
+      "vendor": "Vendor / bundle",
+      "processes": "Main processes",
+      "sequence": "Detailed operational sequence",
+      "references": "References",
+      "provenance": "Provenance",
+      "confidence": "Confidence"
+    },
+    "text": {
+      "technicalIntro": "This Integration Flow receives input from the channels found in the package and produces output towards the configured receivers. The logic is presented in an operational form so that analysis and handover are faster.",
+      "functionalIntro": "The flow transfers data from the source system to the target system, translating the payload into a downstream-friendly format and governing the most common exception paths.",
+      "handoverIntro": "This guide is intended for a teammate taking ownership of the flow without being its original author. Sections are ordered to accelerate onboarding and troubleshooting.",
+      "auditIntro": "This audit view gathers the main technical evidence, documentation coverage and points of attention for compliance and maintenance.",
+      "trainingIntro": "This training summary highlights the minimum concepts that should be transferred to a new teammate to understand the behavior of the flow.",
+      "flowSummary": "High-level view of the main path:",
+      "fallback": "Not determinable from ZIP"
+    }
+  }
+}
