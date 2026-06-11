@@ -1,0 +1,56 @@
+{
+  "artifact": {
+    "provenance": "file-extracted",
+    "confidence": 0.95,
+    "data": {
+      "name": "DemoFlow",
+      "version": "1.0.0",
+      "vendor": "SAP"
+    }
+  },
+  "ingressi": {
+    "provenance": "file-extracted",
+    "confidence": 0.9,
+    "data": ["S4"]
+  },
+  "processi": {
+    "provenance": "file-extracted",
+    "confidence": 0.92,
+    "data": ["DemoFlow (id-1)"]
+  },
+  "stepERouting": {
+    "provenance": "rule-based",
+    "confidence": 0.78,
+    "data": [
+      {
+        "step": "Start [start]",
+        "route": "b"
+      }
+    ]
+  },
+  "mappingERegole": {
+    "provenance": "file-extracted",
+    "confidence": 0.86,
+    "data": ["DemoMap: r1"]
+  },
+  "arricchimenti": {
+    "provenance": "rule-based",
+    "confidence": 0.4,
+    "data": ["Non determinabile da zip"]
+  },
+  "output": {
+    "provenance": "file-extracted",
+    "confidence": 0.85,
+    "data": ["CRM"]
+  },
+  "dipendenze": {
+    "provenance": "file-extracted",
+    "confidence": 0.4,
+    "data": ["Non determinabile da zip"]
+  },
+  "assunzioniEGap": {
+    "provenance": "rule-based",
+    "confidence": 0.7,
+    "data": ["Dettaglio schema non disponibile: file .xsd assenti"]
+  }
+}
