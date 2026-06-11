@@ -282,13 +282,21 @@ const escapeHtml = (value: string) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 
+const sanitizeMermaidLabel = (value: string) =>
+  value
+    .replace(/\[.*?\]/g, "")   // strip [type] suffixes
+    .replace(/['"]/g, "")       // strip quotes
+    .replace(/[()]/g, "")       // strip parens
+    .replace(/\s{2,}/g, " ")
+    .trim() || "?";
+
 const buildMermaidFlow = (model: CanonicalModel) => {
   const lines = model.stepERouting.data.slice(0, 12).map((step, index) => {
     const fromId = `N${index}`;
     const toId = `N${index + 1}`;
-    const fromLabel = step.step.replace(/\|/g, " ");
-    const toLabel = (step.route || "Fine").replace(/\|/g, " ");
-    return `  ${fromId}[${fromLabel}] --> ${toId}[${toLabel}]`;
+    const fromLabel = sanitizeMermaidLabel(step.step);
+    const toLabel = sanitizeMermaidLabel(step.route || "Fine");
+    return `  ${fromId}["${fromLabel}"] --> ${toId}["${toLabel}"]`;
   });
 
   if (lines.length === 0) {
