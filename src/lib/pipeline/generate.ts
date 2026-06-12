@@ -1,5 +1,6 @@
 import { AppError } from "../errors.ts";
 import { AIDocumentEnhancer } from "../ai-enhancer.ts";
+import { enrichCanonicalModelWithAI } from "../semantic-enricher.ts";
 import { getLocaleMessages } from "../locales/index.ts";
 import { logWarning } from "../logger.ts";
 import { parseIflw } from "../parsers/iflw.ts";
@@ -1480,7 +1481,14 @@ export const generateFromZipBuffer = async (
   options: GenerateDocumentsOptions = {},
 ): Promise<GenerationResult> => {
   const parsed = parseZipArtifacts(zipBuffer);
-  const canonicalModel = buildCanonicalModel(parsed);
+  let canonicalModel = buildCanonicalModel(parsed);
+
+  // Apply semantic enrichment with AI (optional, fallback to deterministic)
+  const enrichedModel = await enrichCanonicalModelWithAI(parsed, canonicalModel);
+  if (enrichedModel) {
+    canonicalModel = enrichedModel;
+  }
+
   const locale = options.language ?? "it";
   const mode = options.mode ?? "deterministic";
   const selectedTemplateIds = options.templateIds?.length ? options.templateIds : defaultTemplateIds;

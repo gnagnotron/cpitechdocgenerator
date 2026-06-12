@@ -24,6 +24,18 @@ export const getAIConfigurationStatus = () => ({
   },
 });
 
+export const callAIWithFallback = async (prompt: string): Promise<string | null> => {
+  if (!canUseAI()) {
+    return null;
+  }
+  try {
+    const response = await timed(callPreferredProvider(prompt));
+    return response.text;
+  } catch {
+    return null;
+  }
+};
+
 const fallbackReport = (reason?: string): AIEnhancementReport => ({
   enabled: false,
   provider: "deterministic-fallback",
