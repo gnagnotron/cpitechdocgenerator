@@ -405,11 +405,13 @@ const markdownToHtml = (markdown: string) => {
     }
 
     if (line.startsWith("```") && inCode) {
-      const escapedCode = escapeHtml(codeBuffer.join("\n"));
       const langLabel = codeLang ? `<span class="code-lang">${escapeHtml(codeLang)}</span>` : "";
       if (codeLang === "mermaid") {
-        blocks.push(`<div class="mermaid-wrap"><pre class="mermaid">${escapedCode}</pre></div>`);
+        // Mermaid needs raw (unescaped) text to parse correctly
+        const rawMermaid = codeBuffer.join("\n");
+        blocks.push(`<div class="mermaid-wrap"><div class="mermaid">${rawMermaid}</div></div>`);
       } else {
+        const escapedCode = escapeHtml(codeBuffer.join("\n"));
         blocks.push(`<div class="code-block"><div class="code-header">${langLabel}<button class="copy-btn" onclick="copyCode(this)" aria-label="Copia codice">Copia</button></div><pre><code>${escapedCode}</code></pre></div>`);
       }
       inCode = false;
@@ -1050,6 +1052,8 @@ function copyCode(btn) {
 
 <button id="back-to-top" aria-label="Torna su">&#8679;</button>
 
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:'default',securityLevel:'loose',themeVariables:{primaryColor:'#0ea5e9',primaryTextColor:'#1e293b',lineColor:'#64748b',edgeLabelBackground:'#f8fafc'}});</script>
 <script>${JS}</script>
 </body>
 </html>`;
