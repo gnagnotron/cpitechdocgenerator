@@ -4,13 +4,25 @@ import type { AIEnhancementReport, GeneratedDocument, GenerationMode, LanguageCo
 
 const AI_TIMEOUT_MS = 30_000;
 const JSON_HEADERS = { "Content-Type": "application/json" };
+const MCP_TIMEOUT_MS = Number.parseInt(process.env.MCP_CONTEXT_TIMEOUT_MS || "2500", 10);
 
 const hasGroq = () => Boolean(process.env.GROQ_API_KEY);
 const hasOpenAI = () => Boolean(process.env.OPENAI_API_KEY);
 const hasAnthropic = () => Boolean(process.env.ANTHROPIC_API_KEY);
-const hasOllama = () => Boolean(process.env.OLLAMA_HOST || process.env.NODE_ENV !== "production");
+const hasOllama = () => process.env.OLLAMA_ENABLED === "true";
+const hasMCPContext = () => process.env.MCP_ENABLED === "true" && Boolean(process.env.MCP_CONTEXT_ENDPOINT);
 
 const canUseAI = () => hasGroq() || hasOpenAI() || hasAnthropic() || hasOllama();
+
+export const getAIConfigurationStatus = () => ({
+  configured: canUseAI(),
+  providers: {
+    groq: hasGroq(),
+    openai: hasOpenAI(),
+    anthropic: hasAnthropic(),
+    ollama: hasOllama(),
+  },
+});
 
 const fallbackReport = (reason?: string): AIEnhancementReport => ({
   enabled: false,
@@ -40,6 +52,107 @@ type AIResponse = {
 
 const estimateTokens = (text: string) => Math.max(1, Math.ceil(text.length / 4));
 
+const extractMCPContextText = (payload: unknown) => {
+  if (typeof payload === "string") {
+    return payload.trim();
+  }
+
+  if (typeof payload !== "object" || payload === null) {
+    return "";
+  }
+
+  const data = payload as {
+    context?: unknown;
+    text?: unknown;
+    notes?: unknown;
+  };
+
+  if (typeof data.context === "string" && data.context.trim()) {
+    return data.context.trim();
+  }
+
+  if (typeof data.text === "string" && data.text.trim()) {
+    return data.text.trim();
+  }
+
+  if (Array.isArray(data.notes)) {
+    const notes = data.notes.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    if (notes.length > 0) {
+      return notes.map((note) => `- ${note}`).join("\n");
+    }
+  }
+
+  return "";
+};
+
+const getMCPContext = async (document: GeneratedDocument, language: LanguageCode) => {
+  if (!hasMCPContext()) {
+    return "";
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MCP_TIMEOUT_MS);
+
+  try {
+    const headers: Record<string, string> = {
+      ...JSON_HEADERS,
+    };
+    if (process.env.MCP_AUTH_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.MCP_AUTH_TOKEN}`;
+    }
+
+    const response = await fetch(process.env.MCP_CONTEXT_ENDPOINT ?? "", {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        language,
+        documentName: document.name,
+        templateId: document.templateId,
+        markdown: document.markdown,
+      }),
+    });
+
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = (await response.json()) as unknown;
+    return extractMCPContextText(payload);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const parseErrorMessage = (raw: string) => {
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: { message?: string };
+      message?: string;
+    };
+    return parsed.error?.message || parsed.message || raw;
+  } catch {
+    return raw;
+  }
+};
+
+const parseRetryAfterSeconds = (retryAfterHeader: string | null) => {
+  if (!retryAfterHeader) {
+    return null;
+  }
+  const asNumber = Number(retryAfterHeader);
+  if (!Number.isNaN(asNumber) && asNumber >= 0) {
+    return asNumber;
+  }
+  const retryDate = Date.parse(retryAfterHeader);
+  if (Number.isNaN(retryDate)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((retryDate - Date.now()) / 1000));
+};
+
 const buildPrompt = (document: GeneratedDocument, locale: LocaleMessages, language: LanguageCode) => {
   const narrativePrompt = locale.docs.text.aiNarrativePrompt;
   const bestPracticesPrompt = locale.docs.text.aiBestPracticesPrompt;
@@ -48,6 +161,16 @@ const buildPrompt = (document: GeneratedDocument, locale: LocaleMessages, langua
   return [
     `Language: ${language}`,
     `Document template: ${document.templateId ?? document.name}`,
+    "Task: produce an AI addendum with non-obvious, actionable insights derived from the source document.",
+    "Do not rewrite the whole source document and do not repeat it verbatim.",
+    "Output format (Markdown):",
+    "## Strategic Insights",
+    "- 5 to 8 bullets with technical/operational implications.",
+    "## Risks and Mitigations",
+    "- Table with columns: Risk | Trigger | Mitigation | Monitoring signal.",
+    "## Advanced Test Scenarios",
+    "- At least 6 realistic end-to-end and edge-case scenarios.",
+    "Only use facts inferable from the source document. If data is missing, state explicit assumptions.",
     narrativePrompt,
     bestPracticesPrompt,
     testCasesPrompt,
@@ -59,44 +182,86 @@ const buildPrompt = (document: GeneratedDocument, locale: LocaleMessages, langua
   ].join("\n\n");
 };
 
+const appendMCPContextToPrompt = (prompt: string, mcpContext: string) => {
+  if (!mcpContext.trim()) {
+    return prompt;
+  }
+  return [
+    prompt,
+    "Additional context from optional MCP tools:",
+    mcpContext,
+    "Use this context only if it is consistent with the source document.",
+  ].join("\n\n");
+};
+
+const aiAddendumTitleByLanguage: Record<LanguageCode, string> = {
+  it: "## Addendum AI",
+  en: "## AI Addendum",
+  fr: "## Addendum IA",
+  de: "## KI-Addendum",
+};
+
+const mergeWithAIAddendum = (baseMarkdown: string, aiMarkdown: string, language: LanguageCode) => {
+  const cleaned = aiMarkdown.trim().replace(/^```markdown\s*/i, "").replace(/```\s*$/i, "").trim();
+  if (!cleaned) {
+    return baseMarkdown;
+  }
+  return `${baseMarkdown}\n\n${aiAddendumTitleByLanguage[language]}\n\n${cleaned}`;
+};
+
 const callGroq = async (prompt: string): Promise<AIResponse> => {
-  const model = process.env.GROQ_MODEL || "mixtral-8x7b-32768";
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      ...JSON_HEADERS,
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: "You improve technical documentation without fabricating missing facts." },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
+  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const maxRetries = Number.parseInt(process.env.GROQ_MAX_RETRIES || "2", 10);
 
-  if (!response.ok) {
-    throw new Error(`Groq request failed: ${response.status}`);
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        ...JSON_HEADERS,
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: "You improve technical documentation without fabricating missing facts." },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+
+    if (response.ok) {
+      const payload = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      const text = payload.choices?.[0]?.message?.content?.trim();
+      if (!text) {
+        throw new Error("Groq returned empty content");
+      }
+
+      return {
+        provider: "groq",
+        model,
+        text,
+        promptTokensApprox: payload.usage?.prompt_tokens ?? estimateTokens(prompt),
+        completionTokensApprox: payload.usage?.completion_tokens ?? estimateTokens(text),
+      };
+    }
+
+    const rawError = await response.text();
+    const errorMessage = parseErrorMessage(rawError);
+    if (response.status === 429 && attempt < maxRetries) {
+      const retryAfter = parseRetryAfterSeconds(response.headers.get("retry-after"));
+      const backoffMs = retryAfter ? retryAfter * 1000 : (attempt + 1) * 1500;
+      await delay(backoffMs);
+      continue;
+    }
+
+    throw new Error(`Groq request failed: ${response.status}${errorMessage ? ` - ${errorMessage}` : ""}`);
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-  const text = payload.choices?.[0]?.message?.content?.trim();
-  if (!text) {
-    throw new Error("Groq returned empty content");
-  }
-
-  return {
-    provider: "groq",
-    model,
-    text,
-    promptTokensApprox: payload.usage?.prompt_tokens ?? estimateTokens(prompt),
-    completionTokensApprox: payload.usage?.completion_tokens ?? estimateTokens(text),
-  };
+  throw new Error("Groq request failed after retries");
 };
 
 const callOpenAI = async (prompt: string): Promise<AIResponse> => {
@@ -219,31 +384,36 @@ const callOllama = async (prompt: string): Promise<AIResponse> => {
 };
 
 const callPreferredProvider = async (prompt: string): Promise<AIResponse> => {
-  const providers: Array<() => Promise<AIResponse>> = [];
+  const providers: Array<{ name: string; run: () => Promise<AIResponse> }> = [];
 
   if (hasGroq()) {
-    providers.push(() => callGroq(prompt));
+    providers.push({ name: "groq", run: () => callGroq(prompt) });
   }
   if (hasOpenAI()) {
-    providers.push(() => callOpenAI(prompt));
+    providers.push({ name: "openai", run: () => callOpenAI(prompt) });
   }
   if (hasAnthropic()) {
-    providers.push(() => callAnthropic(prompt));
+    providers.push({ name: "anthropic", run: () => callAnthropic(prompt) });
   }
   if (hasOllama()) {
-    providers.push(() => callOllama(prompt));
+    providers.push({ name: "ollama", run: () => callOllama(prompt) });
   }
 
-  let lastError: Error | null = null;
+  const failures: string[] = [];
   for (const provider of providers) {
     try {
-      return await provider();
+      return await provider.run();
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error("Unknown provider error");
+      const message = error instanceof Error ? error.message : "Unknown provider error";
+      failures.push(`${provider.name}: ${message}`);
     }
   }
 
-  throw lastError ?? new Error("No AI providers available");
+  if (failures.length > 0) {
+    throw new Error(failures.join(" | "));
+  }
+
+  throw new Error("No AI providers available");
 };
 
 const enhanceDocumentWithAI = async (
@@ -251,12 +421,13 @@ const enhanceDocumentWithAI = async (
   locale: LocaleMessages,
   language: LanguageCode,
 ) => {
-  const prompt = buildPrompt(document, locale, language);
+  const mcpContext = await getMCPContext(document, language);
+  const prompt = appendMCPContextToPrompt(buildPrompt(document, locale, language), mcpContext);
   const response = await callPreferredProvider(prompt);
   return {
     document: {
       ...document,
-      markdown: response.text,
+      markdown: mergeWithAIAddendum(document.markdown, response.text, language),
     },
     response,
   };

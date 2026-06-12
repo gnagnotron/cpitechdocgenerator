@@ -81,10 +81,29 @@ Per la modalita deterministic-only non sono obbligatorie variabili ambiente.
 Variabili opzionali supportate:
 
 - GROQ_API_KEY
+- OLLAMA_ENABLED (`true` per abilitarlo esplicitamente)
 - OLLAMA_HOST
 - OPENAI_API_KEY
+- ANTHROPIC_API_KEY
+- MCP_ENABLED (`true` per attivare enrichment opzionale)
+- MCP_CONTEXT_ENDPOINT
+- MCP_AUTH_TOKEN
+- MCP_CONTEXT_TIMEOUT_MS
 
 Se assenti, il sistema continua in fallback deterministic.
+
+### MCP opzionale locale
+
+Per testare MCP senza servizi esterni puoi usare il mock interno:
+
+- Endpoint mock: `/api/mcp/mock-context`
+- Variabili locali:
+	- `MCP_ENABLED=true`
+	- `MCP_CONTEXT_ENDPOINT=http://localhost:3000/api/mcp/mock-context`
+	- `MCP_AUTH_TOKEN=` (opzionale)
+	- `MCP_CONTEXT_TIMEOUT_MS=2500`
+
+Se il mock (o un endpoint MCP reale) non risponde, la pipeline continua con provider AI standard e fallback deterministic.
 
 ## Struttura progetto
 
@@ -106,6 +125,12 @@ Se assenti, il sistema continua in fallback deterministic.
 - tests/*.test.ts: unit test parser/generator
 - samples/demo-output: output esempio
 - render.yaml: deploy Render
+
+## Documentazione tecnica
+
+Per una guida tecnica orientata alla manutenzione del codice, vedi `TECHNICAL-README.md`.
+
+Per una sintesi rapida orientata all'handover, vedi `HANDOVER-README.md`.
 
 ## API
 
@@ -168,9 +193,30 @@ Recupera una sessione completa per preview/link condivisibile.
 	 - Environment: Node
 	 - Build Command: npm install && npm run build
 	 - Start Command: npm run start
-	 - Env vars opzionali: `GROQ_API_KEY`, `OLLAMA_HOST`, `OPENAI_API_KEY`
+	 - Env vars opzionali: `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_ENABLED`, `OLLAMA_HOST`, `MCP_ENABLED`, `MCP_CONTEXT_ENDPOINT`, `MCP_AUTH_TOKEN`, `MCP_CONTEXT_TIMEOUT_MS`
 6. Deploy.
 7. Apri URL Render e testa upload di uno ZIP iFlow.
+
+### Configurazione Render consigliata
+
+Profilo base (solo deterministic fallback):
+
+- `MCP_ENABLED=false`
+- `OLLAMA_ENABLED=false`
+
+Profilo AI con Groq:
+
+- `GROQ_API_KEY=<secret>`
+- `GROQ_MODEL=llama-3.1-8b-instant`
+- `GROQ_MAX_RETRIES=2`
+- `MCP_ENABLED=false` (oppure `true` se vuoi enrich)
+
+Profilo AI + MCP endpoint esterno:
+
+- `MCP_ENABLED=true`
+- `MCP_CONTEXT_ENDPOINT=https://<tuo-endpoint-mcp>/context`
+- `MCP_AUTH_TOKEN=<secret-opzionale>`
+- `MCP_CONTEXT_TIMEOUT_MS=2500`
 
 ## Note affidabilita
 

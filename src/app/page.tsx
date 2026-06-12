@@ -74,6 +74,7 @@ export default function Home() {
   const [sharePath, setSharePath] = useState("");
   const [qualityGate, setQualityGate] = useState<QualityGateReport | null>(null);
   const [aiFallbackReason, setAiFallbackReason] = useState<string | null>(null);
+  const [isAIConfigured, setIsAIConfigured] = useState<boolean | null>(null);
   const locale = getLocaleMessages(language);
 
   const activeDocument = documents[activeDoc];
@@ -101,6 +102,25 @@ export default function Home() {
       setLanguage(storedLanguage);
     }
     refreshSessions();
+  }, []);
+
+  useEffect(() => {
+    const detectAIConfiguration = async () => {
+      try {
+        const response = await fetch("/api/ai/status", { cache: "no-store" });
+        if (!response.ok) {
+          setIsAIConfigured(null);
+          return;
+        }
+
+        const payload = (await response.json()) as { configured?: boolean };
+        setIsAIConfigured(Boolean(payload.configured));
+      } catch {
+        setIsAIConfigured(null);
+      }
+    };
+
+    detectAIConfiguration();
   }, []);
 
   useEffect(() => {
@@ -265,7 +285,7 @@ export default function Home() {
             <p className="text-xs text-slate-500">
               {locale.ui.labels.estimatedTime}: ~{estimatedSeconds}s
             </p>
-            {mode === "ai-enhanced" && (
+            {mode === "ai-enhanced" && isAIConfigured === false && (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 {locale.ui.labels.aiUnavailable}
               </p>

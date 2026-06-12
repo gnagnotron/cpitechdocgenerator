@@ -10,3 +10,31 @@ services:
         value: 22
       - key: NODE_ENV
         value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: GROQ_MAX_RETRIES
+        value: 2
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-3-5-sonnet-latest
+      - key: OLLAMA_ENABLED
+        value: false
+      - key: OLLAMA_HOST
+        value: ""
+      - key: OLLAMA_MODEL
+        value: mistral
+      - key: MCP_ENABLED
+        value: false
+      - key: MCP_CONTEXT_ENDPOINT
+        value: ""
+      - key: MCP_AUTH_TOKEN
+        sync: false
+      - key: MCP_CONTEXT_TIMEOUT_MS
+        value: 2500
