@@ -10,7 +10,7 @@
     "test": "node --test --experimental-strip-types --experimental-specifier-resolution=node tests/**/*.test.ts"
   },
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",
