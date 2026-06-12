@@ -334,6 +334,13 @@ const renderReferences = (parsed: ParsedZipArtifacts, artifactName: string) => {
 
 const stripListPrefix = (value: string) => value.replace(/^[-\d.\s]+/, "").trim();
 
+const slugify = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-");
+
 const markdownToHtml = (markdown: string) => {
   const lines = markdown.split("\n");
   const blocks: string[] = [];
@@ -341,6 +348,17 @@ const markdownToHtml = (markdown: string) => {
   let codeLang = "";
   let codeBuffer: string[] = [];
   let listType: "ul" | "ol" | null = null;
+  let inTable = false;
+  let tableRows: string[] = [];
+  let tableIsHeader = true;
+  const headings: Array<{ level: number; text: string; slug: string }> = [];
+  const slugCounts: Record<string, number> = {};
+
+  const makeSlug = (text: string) => {
+    const base = slugify(text);
+    slugCounts[base] = (slugCounts[base] ?? 0) + 1;
+    return slugCounts[base] === 1 ? base : `${base}-${slugCounts[base] - 1}`;
+  };
 
   const closeList = () => {
     if (listType) {
@@ -349,11 +367,29 @@ const markdownToHtml = (markdown: string) => {
     }
   };
 
+  const closeTable = () => {
+    if (!inTable) return;
+    blocks.push(`<div class="table-wrap"><table>${tableRows.join("")}</table></div>`);
+    inTable = false;
+    tableRows = [];
+    tableIsHeader = true;
+  };
+
   const formatInline = (value: string) => {
-    let formatted = escapeHtml(value);
-    formatted = formatted.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    formatted = formatted.replace(/`([^`]+)`/g, "<code>$1</code>");
-    return formatted;
+    let f = escapeHtml(value);
+    f = f.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    f = f.replace(/\*(.+?)\*/g, "<em>$1</em>");
+    f = f.replace(/`([^`]+)`/g, "<code>$1</code>");
+    f = f.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    return f;
+  };
+
+  const headingBlock = (level: number, raw: string) => {
+    const text = formatInline(raw);
+    const slug = makeSlug(raw);
+    headings.push({ level, text: raw, slug });
+    const anchor = `<a class="heading-anchor" href="#${slug}" aria-label="Collegamento alla sezione">&#182;</a>`;
+    return `<h${level} id="${slug}">${text}${anchor}</h${level}>`;
   };
 
   for (const raw of lines) {
@@ -361,6 +397,7 @@ const markdownToHtml = (markdown: string) => {
 
     if (line.startsWith("```") && !inCode) {
       closeList();
+      closeTable();
       inCode = true;
       codeLang = line.slice(3).trim().toLowerCase();
       codeBuffer = [];
@@ -369,10 +406,11 @@ const markdownToHtml = (markdown: string) => {
 
     if (line.startsWith("```") && inCode) {
       const escapedCode = escapeHtml(codeBuffer.join("\n"));
+      const langLabel = codeLang ? `<span class="code-lang">${escapeHtml(codeLang)}</span>` : "";
       if (codeLang === "mermaid") {
-        blocks.push(`<pre class=\"mermaid\">${escapedCode}</pre>`);
+        blocks.push(`<div class="mermaid-wrap"><pre class="mermaid">${escapedCode}</pre></div>`);
       } else {
-        blocks.push(`<pre><code>${escapedCode}</code></pre>`);
+        blocks.push(`<div class="code-block"><div class="code-header">${langLabel}<button class="copy-btn" onclick="copyCode(this)" aria-label="Copia codice">Copia</button></div><pre><code>${escapedCode}</code></pre></div>`);
       }
       inCode = false;
       codeLang = "";
@@ -385,44 +423,68 @@ const markdownToHtml = (markdown: string) => {
       continue;
     }
 
+    if (line.includes("|") && line.trim().startsWith("|")) {
+      closeList();
+      if (!inTable) {
+        inTable = true;
+        tableRows = [];
+        tableIsHeader = true;
+      }
+      const isSeparator = /^\|[\s\-:|]+\|/.test(line);
+      if (isSeparator) {
+        tableIsHeader = false;
+        continue;
+      }
+      const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+      const tag = tableIsHeader ? "th" : "td";
+      const rowHtml = `<tr>${cells.map((c) => `<${tag}>${formatInline(c)}</${tag}>`).join("")}</tr>`;
+      if (tableIsHeader) {
+        tableRows.push(`<thead>${rowHtml}</thead><tbody>`);
+      } else {
+        tableRows.push(rowHtml);
+      }
+      continue;
+    }
+
+    if (inTable) {
+      closeTable();
+      if (tableRows.length > 0) {
+        blocks.push("</tbody>");
+      }
+    }
+
     if (!line) {
       closeList();
+      closeTable();
       continue;
     }
 
-    if (line.startsWith("### ")) {
-      closeList();
-      blocks.push(`<h3>${formatInline(line.slice(4))}</h3>`);
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      closeList();
-      blocks.push(`<h2>${formatInline(line.slice(3))}</h2>`);
-      continue;
-    }
-    if (line.startsWith("# ")) {
-      closeList();
-      blocks.push(`<h1>${formatInline(line.slice(2))}</h1>`);
-      continue;
-    }
+    if (line.startsWith("#### ")) { closeList(); blocks.push(headingBlock(4, line.slice(5))); continue; }
+    if (line.startsWith("### ")) { closeList(); blocks.push(headingBlock(3, line.slice(4))); continue; }
+    if (line.startsWith("## ")) { closeList(); blocks.push(headingBlock(2, line.slice(3))); continue; }
+    if (line.startsWith("# ")) { closeList(); blocks.push(headingBlock(1, line.slice(2))); continue; }
 
     if (/^\d+\.\s+/.test(line)) {
-      if (listType !== "ol") {
-        closeList();
-        blocks.push("<ol>");
-        listType = "ol";
-      }
+      if (listType !== "ol") { closeList(); blocks.push("<ol>"); listType = "ol"; }
       blocks.push(`<li>${formatInline(line.replace(/^\d+\.\s+/, ""))}</li>`);
       continue;
     }
 
-    if (line.startsWith("- ")) {
-      if (listType !== "ul") {
-        closeList();
-        blocks.push("<ul>");
-        listType = "ul";
-      }
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      if (listType !== "ul") { closeList(); blocks.push("<ul>"); listType = "ul"; }
       blocks.push(`<li>${formatInline(line.slice(2))}</li>`);
+      continue;
+    }
+
+    if (line.startsWith("> ")) {
+      closeList();
+      blocks.push(`<blockquote>${formatInline(line.slice(2))}</blockquote>`);
+      continue;
+    }
+
+    if (line === "---" || line === "***") {
+      closeList();
+      blocks.push("<hr>");
       continue;
     }
 
@@ -431,8 +493,566 @@ const markdownToHtml = (markdown: string) => {
   }
 
   closeList();
+  closeTable();
 
-  return `<!doctype html><html lang=\"it\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Documento</title><style>:root{--bg:#f7f8fb;--card:#fff;--text:#1f2937;--muted:#4b5563;--accent:#0b5fff;--border:#e5e7eb;--code-bg:#f3f4f6;}*{box-sizing:border-box;}body{margin:0;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;color:var(--text);background:linear-gradient(180deg,#eef2ff 0%,var(--bg) 35%,var(--bg) 100%);line-height:1.65;}.container{max-width:980px;margin:32px auto;padding:0 20px;}article{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;box-shadow:0 6px 18px rgba(15,23,42,.06);}h1,h2,h3{line-height:1.25;margin-top:1.3em;margin-bottom:.5em;}h1{margin-top:0;font-size:1.9rem;}h2{font-size:1.35rem;border-bottom:1px solid var(--border);padding-bottom:.25rem;}h3{font-size:1.08rem;}p,li{color:var(--text);}ul,ol{padding-left:1.25rem;}code{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.1rem .35rem;font-family:Consolas,Courier New,monospace;font-size:.92em;}pre{background:#111827;color:#f9fafb;border-radius:10px;padding:14px;overflow-x:auto;}a{color:var(--accent);text-decoration:none;}a:hover{text-decoration:underline;}</style></head><body><div class=\"container\"><article>${blocks.join("\n")}</article></div></body></html>`;
+  const docTitle = headings[0]?.text ?? "Documento";
+
+  const tocItems = headings
+    .filter((h) => h.level <= 3)
+    .map((h) => {
+      const indent = h.level === 1 ? "" : h.level === 2 ? "margin-left:0.75rem;" : "margin-left:1.5rem;font-size:0.82rem;";
+      return `<li style="${indent}"><a href="#${h.slug}">${escapeHtml(h.text)}</a></li>`;
+    })
+    .join("\n");
+
+  const CSS = `
+:root {
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --sidebar-bg: #1e293b;
+  --sidebar-text: #cbd5e1;
+  --sidebar-active: #38bdf8;
+  --sidebar-hover: #334155;
+  --text: #1e293b;
+  --muted: #64748b;
+  --accent: #0ea5e9;
+  --accent-hover: #0284c7;
+  --border: #e2e8f0;
+  --code-bg: #f1f5f9;
+  --code-text: #1e293b;
+  --pre-bg: #0f172a;
+  --pre-text: #e2e8f0;
+  --toc-bg: #f8fafc;
+  --blockquote-bg: #f0f9ff;
+  --blockquote-border: #0ea5e9;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+  --sidebar-width: 260px;
+  --toc-width: 220px;
+  --radius: 8px;
+  --transition: 0.2s ease;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --sidebar-bg: #0f172a;
+    --sidebar-text: #94a3b8;
+    --sidebar-active: #38bdf8;
+    --sidebar-hover: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-hover: #7dd3fc;
+    --border: #334155;
+    --code-bg: #1e293b;
+    --code-text: #e2e8f0;
+    --pre-bg: #020617;
+    --pre-text: #e2e8f0;
+    --toc-bg: #1e293b;
+    --blockquote-bg: #1e3a4c;
+    --blockquote-border: #38bdf8;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  display: flex;
+  min-height: 100vh;
+}
+/* ── Sidebar ───────────────────────────────────────────── */
+#sidebar {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: var(--sidebar-width);
+  background: var(--sidebar-bg);
+  overflow-y: auto;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition);
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+#sidebar-header {
+  padding: 1.25rem 1rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  flex-shrink: 0;
+}
+#sidebar-title {
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+  opacity: 0.7;
+}
+#sidebar-doc-title {
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+#sidebar-toc {
+  padding: 0.75rem 0;
+  flex: 1;
+}
+#sidebar-toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+#sidebar-toc li a {
+  display: block;
+  padding: 0.3rem 1rem;
+  color: var(--sidebar-text);
+  text-decoration: none;
+  font-size: 0.865rem;
+  border-left: 3px solid transparent;
+  transition: all var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sidebar-toc li a:hover, #sidebar-toc li a.active {
+  color: var(--sidebar-active);
+  background: var(--sidebar-hover);
+  border-left-color: var(--sidebar-active);
+}
+/* ── Hamburger ─────────────────────────────────────────── */
+#hamburger {
+  display: none;
+  position: fixed;
+  top: 0.75rem; left: 0.75rem;
+  z-index: 300;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  width: 40px; height: 40px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow);
+  transition: background var(--transition);
+}
+#hamburger:hover { background: var(--accent-hover); }
+#overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  z-index: 150;
+}
+/* ── Search bar ────────────────────────────────────────── */
+#search-bar {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  z-index: 100;
+  padding: 0.6rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+#search-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+#search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14,165,233,.2);
+}
+#search-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* ── Main layout ───────────────────────────────────────── */
+#page {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#content-wrap {
+  display: flex;
+  flex: 1;
+  gap: 2rem;
+  padding: 2rem 2rem 3rem;
+  max-width: 1300px;
+  width: 100%;
+  align-self: flex-start;
+}
+#content {
+  flex: 1;
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  box-shadow: var(--shadow);
+}
+/* ── TOC (right) ───────────────────────────────────────── */
+#toc-panel {
+  width: var(--toc-width);
+  flex-shrink: 0;
+  position: sticky;
+  top: 3.5rem;
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+}
+#toc-inner {
+  background: var(--toc-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+#toc-inner h3 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+  font-weight: 700;
+}
+#toc-inner ul { list-style: none; padding: 0; }
+#toc-inner li a {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.2rem 0;
+  border-left: 2px solid transparent;
+  padding-left: 0.5rem;
+  transition: color var(--transition), border-color var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#toc-inner li a:hover, #toc-inner li a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+}
+/* ── Typography ────────────────────────────────────────── */
+#content h1, #content h2, #content h3, #content h4 {
+  line-height: 1.3;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  position: relative;
+}
+#content h1 { font-size: 1.85rem; margin-top: 0; border-bottom: 2px solid var(--accent); padding-bottom: 0.4rem; }
+#content h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+#content h3 { font-size: 1.1rem; color: var(--muted); }
+#content h4 { font-size: 0.95rem; color: var(--muted); font-weight: 600; }
+#content p { max-width: 75ch; margin-bottom: 1rem; }
+#content ul, #content ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+#content li { margin-bottom: 0.3rem; }
+#content li > p { margin-bottom: 0; }
+#content strong { font-weight: 600; }
+#content a { color: var(--accent); text-decoration: none; transition: color var(--transition); }
+#content a:hover { color: var(--accent-hover); text-decoration: underline; }
+#content hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+/* ── Headings anchor ───────────────────────────────────── */
+.heading-anchor {
+  opacity: 0;
+  font-size: 0.85em;
+  margin-left: 0.4rem;
+  color: var(--accent) !important;
+  text-decoration: none !important;
+  transition: opacity var(--transition);
+  vertical-align: middle;
+}
+h1:hover .heading-anchor,
+h2:hover .heading-anchor,
+h3:hover .heading-anchor,
+h4:hover .heading-anchor { opacity: 1; }
+/* ── Blockquote ────────────────────────────────────────── */
+#content blockquote {
+  background: var(--blockquote-bg);
+  border-left: 4px solid var(--blockquote-border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+  color: var(--muted);
+  font-style: italic;
+}
+/* ── Tables ────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 1.25rem 0; border-radius: var(--radius); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+thead { background: var(--code-bg); }
+th, td { padding: 0.6rem 0.85rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--code-bg); }
+/* ── Code ──────────────────────────────────────────────── */
+code {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 0.875em;
+}
+.code-block { border-radius: var(--radius); overflow: hidden; margin: 1.25rem 0; border: 1px solid var(--border); }
+.code-header {
+  background: #1e293b;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  gap: 0.5rem;
+}
+.code-lang { color: #94a3b8; font-size: 0.75rem; font-family: monospace; }
+.code-block pre {
+  background: var(--pre-bg);
+  color: var(--pre-text);
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.code-block pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+.copy-btn {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  border-radius: 4px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.copy-btn:hover { background: #334155; color: #e2e8f0; border-color: #64748b; }
+.copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+/* ── Mermaid ───────────────────────────────────────────── */
+.mermaid-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  text-align: center;
+}
+.mermaid { display: block; max-width: 100%; }
+/* ── Search highlight ──────────────────────────────────── */
+mark.search-hl { background: #fef08a; color: #1e293b; border-radius: 2px; padding: 0 1px; }
+/* ── Back to top ───────────────────────────────────────── */
+#back-to-top {
+  position: fixed;
+  bottom: 2rem; right: 2rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 44px; height: 44px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition), background var(--transition), transform var(--transition);
+  z-index: 400;
+}
+#back-to-top.visible { opacity: 1; pointer-events: auto; }
+#back-to-top:hover { background: var(--accent-hover); transform: translateY(-2px); }
+/* ── Responsive ────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  #toc-panel { display: none; }
+}
+@media (max-width: 768px) {
+  #sidebar { transform: translateX(-100%); }
+  #sidebar.open { transform: translateX(0); }
+  #page { margin-left: 0; }
+  #hamburger { display: flex; }
+  #overlay.visible { display: block; }
+  #search-bar { padding-left: 3.5rem; }
+  #content-wrap { padding: 1rem; }
+  #content { padding: 1.25rem; }
+  #back-to-top { bottom: 1rem; right: 1rem; }
+}
+/* ── No-results notice ─────────────────────────────────── */
+#no-results {
+  display: none;
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  font-size: 1rem;
+}
+`;
+
+  const JS = `
+function copyCode(btn) {
+  var pre = btn.closest('.code-block').querySelector('pre');
+  var text = pre.textContent || '';
+  navigator.clipboard.writeText(text).then(function() {
+    btn.textContent = 'Copiato!';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'Copia'; btn.classList.remove('copied'); }, 1800);
+  });
+}
+
+(function() {
+  // hamburger
+  var hamburger = document.getElementById('hamburger');
+  var sidebar = document.getElementById('sidebar');
+  var overlay = document.getElementById('overlay');
+  hamburger && hamburger.addEventListener('click', function() {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('visible');
+  });
+  overlay && overlay.addEventListener('click', function() {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('visible');
+  });
+
+  // back to top
+  var btt = document.getElementById('back-to-top');
+  window.addEventListener('scroll', function() {
+    btt && (window.scrollY > 300 ? btt.classList.add('visible') : btt.classList.remove('visible'));
+  }, { passive: true });
+  btt && btt.addEventListener('click', function() { window.scrollTo({ top: 0, behavior: 'smooth' }); });
+
+  // active TOC on scroll
+  var allLinks = document.querySelectorAll('#sidebar-toc a, #toc-inner a');
+  var allHeadings = document.querySelectorAll('#content h1,#content h2,#content h3,#content h4');
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      if (e.isIntersecting) {
+        allLinks.forEach(function(a) {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id);
+        });
+      }
+    });
+  }, { rootMargin: '-10% 0px -75% 0px' });
+  allHeadings.forEach(function(h) { observer.observe(h); });
+
+  // search
+  var input = document.getElementById('search-input');
+  var countEl = document.getElementById('search-count');
+  var noResults = document.getElementById('no-results');
+  if (!input) return;
+
+  var originalContent = document.getElementById('content').innerHTML;
+
+  function removeHL(el) {
+    el.querySelectorAll('mark.search-hl').forEach(function(m) {
+      m.replaceWith(document.createTextNode(m.textContent));
+    });
+  }
+
+  function highlight(node, q) {
+    if (node.nodeType === 3) {
+      var idx = node.textContent.toLowerCase().indexOf(q);
+      if (idx === -1) return;
+      var span = document.createDocumentFragment();
+      span.appendChild(document.createTextNode(node.textContent.slice(0, idx)));
+      var mark = document.createElement('mark');
+      mark.className = 'search-hl';
+      mark.textContent = node.textContent.slice(idx, idx + q.length);
+      span.appendChild(mark);
+      span.appendChild(document.createTextNode(node.textContent.slice(idx + q.length)));
+      node.parentNode.replaceChild(span, node);
+    } else if (node.nodeType === 1 && !['SCRIPT','STYLE','MARK'].includes(node.tagName)) {
+      Array.from(node.childNodes).forEach(function(c) { highlight(c, q); });
+    }
+  }
+
+  input.addEventListener('input', function() {
+    var q = input.value.trim().toLowerCase();
+    var content = document.getElementById('content');
+    content.innerHTML = originalContent;
+    if (q.length < 2) {
+      countEl.textContent = '';
+      noResults.style.display = 'none';
+      return;
+    }
+    highlight(content, q);
+    var found = content.querySelectorAll('mark.search-hl');
+    countEl.textContent = found.length + ' risultati';
+    noResults.style.display = found.length === 0 ? 'block' : 'none';
+    if (found.length > 0) found[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+})();
+`;
+
+  const sidebarTocHtml = headings
+    .filter((h) => h.level <= 3)
+    .map((h) => {
+      const indent = h.level === 2 ? "margin-left:0.75rem;" : h.level === 3 ? "margin-left:1.5rem;font-size:0.82rem;" : "";
+      return `<li style="${indent}"><a href="#${h.slug}">${escapeHtml(h.text)}</a></li>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(docTitle)}</title>
+<style>${CSS}</style>
+</head>
+<body>
+
+<button id="hamburger" aria-label="Apri menu">&#9776;</button>
+<div id="overlay"></div>
+
+<nav id="sidebar" aria-label="Navigazione documento">
+  <div id="sidebar-header">
+    <div id="sidebar-title">SAP CPI Doc Forge</div>
+    <div id="sidebar-doc-title">${escapeHtml(docTitle)}</div>
+  </div>
+  <div id="sidebar-toc">
+    <ul>${sidebarTocHtml}</ul>
+  </div>
+</nav>
+
+<div id="page">
+  <div id="search-bar" role="search">
+    <input id="search-input" type="search" placeholder="Cerca nel documento…" aria-label="Cerca nel documento">
+    <span id="search-count" aria-live="polite"></span>
+  </div>
+
+  <div id="content-wrap">
+    <main id="content" tabindex="-1">
+      ${blocks.join("\n")}
+      <div id="no-results" aria-live="polite">Nessun risultato trovato.</div>
+    </main>
+
+    <aside id="toc-panel" aria-label="Indice pagina">
+      <div id="toc-inner">
+        <h3>In questa pagina</h3>
+        <ul>${tocItems}</ul>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<button id="back-to-top" aria-label="Torna su">&#8679;</button>
+
+<script>${JS}</script>
+</body>
+</html>`;
 };
 
 const parseZipArtifacts = (zipBuffer: Buffer): ParsedZipArtifacts => {
