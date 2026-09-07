@@ -1267,6 +1267,18 @@ def parse_scripts(files: dict[str, bytes]) -> list[dict]:
 
 # ── Mapping parser ───────────────────────────────────────────────────────
 def parse_mappings(files: dict[str, bytes]) -> list[dict]:
+    def is_disabled_node(node: ET.Element) -> bool:
+        for key, value in node.attrib.items():
+            normalized_key = normalize_key(key)
+            normalized_value = clean_text(value).lower()
+            if normalized_key in ("disabled", "inactive") and normalized_value in ("true", "1", "yes"):
+                return True
+            if normalized_key in ("enabled", "active") and normalized_value in ("false", "0", "no"):
+                return True
+            if normalized_key in ("status", "state") and normalized_value in ("disabled", "inactive", "off"):
+                return True
+        return False
+
     mappings = []
     for name, content in files.items():
         if not name.lower().endswith(".mmap"):
@@ -1293,6 +1305,7 @@ def parse_mappings(files: dict[str, bytes]) -> list[dict]:
             target_path = destination.attrib.get("path", "")
             if not target_path:
                 continue
+            disabled = any(is_disabled_node(node) for node in destination.iter())
             sources = []
             functions = []
             constants = []
@@ -1362,6 +1375,7 @@ def parse_mappings(files: dict[str, bytes]) -> list[dict]:
                 "transformation": transformation,
                 "regola": rule,
                 "details": details,
+                "disabled": disabled,
             })
         if not entry["entries"]:
             entry["warnings"].append("Nessuna associazione estratta dal .mmap")
@@ -1549,7 +1563,13 @@ def set_cell_color(cell, color_hex: str):
     shading = tc_pr.makeelement(qn("w:shd"), {qn("w:fill"): color_hex, qn("w:val"): "clear"})
     tc_pr.append(shading)
 
-def add_table(doc, headers: list[str], rows: list[list], color: str = "003366"):
+def add_table(
+    doc,
+    headers: list[str],
+    rows: list[list],
+    color: str = "003366",
+    disabled_row_indices: set[int] | None = None,
+):
     table = doc.add_table(rows=1, cols=len(headers))
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -1560,10 +1580,13 @@ def add_table(doc, headers: list[str], rows: list[list], color: str = "003366"):
         for paragraph in cell.paragraphs:
             for run in paragraph.runs:
                 run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    for row in rows:
+    disabled_row_indices = disabled_row_indices or set()
+    for row_index, row in enumerate(rows):
         cells = table.add_row().cells
         for index, value in enumerate(row):
             set_cell(cells[index], value)
+            if row_index in disabled_row_indices:
+                set_cell_color(cells[index], "FDE2E2")
     doc.add_paragraph("")
 
 def add_kv(doc, items):
@@ -2741,10 +2764,20 @@ def generate_docx(model: dict, out: Path):
                 continue
             doc.add_heading(f"Inventario: {mapping['name']}", level=2)
             rows = []
+            disabled_row_indices = set()
             for index, entry in enumerate(mapping["entries"], 1):
                 source = ", ".join(entry.get("sources", ["-"]))
-                rows.append([str(index), source, entry.get("transformation", "Direct"), entry.get("target", "-")])
-            add_table(doc, ["#", "Source Fields", "Transformation", "Target Field (path completo)"], rows)
+                transformation = entry.get("transformation", "Direct")
+                if entry.get("disabled"):
+                    transformation = f"DISABILITATO - {transformation}"
+                    disabled_row_indices.add(index - 1)
+                rows.append([str(index), source, transformation, entry.get("target", "-")])
+            add_table(
+                doc,
+                ["#", "Source Fields", "Transformation", "Target Field (path completo)"],
+                rows,
+                disabled_row_indices=disabled_row_indices,
+            )
 
     # ═══ XSLT ═══
     xslt_resources = model.get("xslt_resources", [])
