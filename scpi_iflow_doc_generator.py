@@ -1812,7 +1812,7 @@ def add_executive_summary(doc, model: dict):
     ]
     add_table(doc, ["Informazione", "Valore"], summary_rows)
 
-def add_flow_diagram(doc, model: dict):
+def _add_flow_diagram_legacy(doc, model: dict):
     participants = model.get("participants", [])
     message_flows = model.get("message_flows", [])
     processes = model.get("processes", [])
@@ -2062,6 +2062,374 @@ def add_flow_diagram(doc, model: dict):
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.add_run().add_picture(image_stream, width=Pt(500))
     doc.add_paragraph("Rappresentazione semplificata dei sistemi, del processo principale e dei sottoprocessi richiamati.")
+
+def add_flow_diagram(doc, model: dict):
+    """Disegna una vista funzionale moderna e leggibile dell'iFlow."""
+    participants = model.get("participants", [])
+    message_flows = model.get("message_flows", [])
+    processes = model.get("processes", [])
+    routers = model.get("routers", [])
+
+    def participant_label(participant: dict, fallback: str) -> str:
+        return clean_text(participant.get("name")) or clean_text(participant.get("id")) or fallback
+
+    def wrap_text(value: str, max_chars: int = 32, max_lines: int = 3) -> list[str]:
+        words = clean_text(value).split()
+        if not words:
+            return ["-"]
+        lines = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if len(candidate) <= max_chars:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            if len(word) > max_chars:
+                lines.append(word[:max_chars - 3] + "...")
+                current = ""
+            else:
+                current = word
+        if current:
+            lines.append(current)
+        if len(lines) <= max_lines:
+            return lines
+        lines = lines[:max_lines]
+        if not lines[-1].endswith("..."):
+            lines[-1] = lines[-1][:max_chars - 3].rstrip() + "..."
+        return lines
+
+    def get_role_participants() -> tuple[list[dict], list[dict]]:
+        participant_by_id = {p.get("id"): p for p in participants if p.get("id")}
+        process_ids = {p.get("id") for p in processes if p.get("id")}
+        sender_ids = set()
+        receiver_ids = set()
+        for participant in participants:
+            participant_id = participant.get("id")
+            participant_type = clean_text(participant.get("type")).lower()
+            if "sender" in participant_type:
+                sender_ids.add(participant_id)
+            if "receiver" in participant_type or "receiv" in participant_type:
+                receiver_ids.add(participant_id)
+        for flow in message_flows:
+            source_ref = flow.get("source_ref")
+            target_ref = flow.get("target_ref")
+            if source_ref in participant_by_id and target_ref in process_ids:
+                sender_ids.add(source_ref)
+            if source_ref in process_ids and target_ref in participant_by_id:
+                receiver_ids.add(target_ref)
+        for participant in participants:
+            participant_id = participant.get("id")
+            name = participant_label(participant, "").lower()
+            if any(token in name for token in ("centric", "source", "sender", "postgres", "client")):
+                sender_ids.add(participant_id)
+            if any(token in name for token in ("sap", "receiver", "target", "destination", "s4")):
+                receiver_ids.add(participant_id)
+        participant_ids = list(participant_by_id)
+        if not sender_ids and participant_ids:
+            sender_ids.add(participant_ids[0])
+        receiver_ids -= sender_ids
+        if not receiver_ids and len(participant_ids) > 1:
+            fallback_receiver = next(
+                (pid for pid in reversed(participant_ids) if pid not in sender_ids),
+                None,
+            )
+            if fallback_receiver:
+                receiver_ids.add(fallback_receiver)
+        return (
+            [participant_by_id[pid] for pid in participant_ids if pid in sender_ids],
+            [participant_by_id[pid] for pid in participant_ids if pid in receiver_ids],
+        )
+
+    def get_adapter_labels(sender_participants: list[dict], receiver_participants: list[dict]) -> tuple[str, str]:
+        sender_ids = {p.get("id") for p in sender_participants if p.get("id")}
+        receiver_ids = {p.get("id") for p in receiver_participants if p.get("id")}
+        input_adapter = ""
+        output_adapter = ""
+        for flow in message_flows:
+            adapter = clean_text(flow.get("adapter_type"))
+            if not adapter:
+                continue
+            if flow.get("source_ref") in sender_ids and not input_adapter:
+                input_adapter = adapter
+            if flow.get("target_ref") in receiver_ids and not output_adapter:
+                output_adapter = adapter
+        if not input_adapter and message_flows:
+            input_adapter = clean_text(message_flows[0].get("adapter_type"))
+        if not output_adapter and message_flows:
+            output_adapter = clean_text(message_flows[-1].get("adapter_type"))
+        return input_adapter, output_adapter
+
+    sender_participants, receiver_participants = get_role_participants()
+    source_name = ", ".join(participant_label(p, "Sistema sorgente") for p in sender_participants) or "Sistema sorgente"
+    target_name = ", ".join(participant_label(p, "Sistema destinatario") for p in receiver_participants) or "Sistema destinatario"
+    input_adapter, output_adapter = get_adapter_labels(sender_participants, receiver_participants)
+
+    integration_process = next(
+        (p for p in processes if normalize_process_name(p.get("name")) == "integrationprocess"),
+        processes[0] if processes else {},
+    )
+    process_name = clean_text(integration_process.get("name")) or clean_text(integration_process.get("id")) or "Integration Process"
+    important_steps = []
+    for step in order_process_steps(integration_process):
+        bpmn_type = clean_text(step.get("bpmn_type")).lower()
+        component_type = clean_text(step.get("component_type")).lower()
+        if bpmn_type in ("startevent", "endevent", "callactivity"):
+            continue
+        relevant_bpmn_types = (
+            "servicetask", "scripttask", "receivetask", "sendtask",
+            "exclusivegateway", "inclusivegateway", "parallelgateway",
+        )
+        relevant_component_types = (
+            "content modifier", "script groovy", "message mapping", "trasformazione xslt",
+            "router", "request reply", "splitter", "gather", "multicast", "content enricher",
+        )
+        if bpmn_type in relevant_bpmn_types or component_type in relevant_component_types:
+            important_steps.append({
+                "name": clean_text(step.get("name")) or describe_step_type(step),
+                "type": describe_step_type(step),
+                "bpmn_type": bpmn_type,
+                "component_type": component_type,
+            })
+    unique_steps = []
+    seen_step_names = set()
+    for step in important_steps:
+        key = step["name"].lower()
+        if key not in seen_step_names:
+            seen_step_names.add(key)
+            unique_steps.append(step)
+    important_steps = unique_steps[:7]
+    if not important_steps:
+        important_steps = [{"name": "Elaborazione dati", "type": "Elaborazione", "bpmn_type": "", "component_type": ""}]
+
+    router_names = [
+        clean_text(router.get("name")) or "Router / Decisione"
+        for router in routers
+        if router.get("process_id") == integration_process.get("id")
+    ]
+    if router_names and not any(
+        any(token in step["name"].lower() for token in ("router", "decision", "choice"))
+        for step in important_steps
+    ):
+        important_steps.append({
+            "name": router_names[0],
+            "type": "Router / decisione",
+            "bpmn_type": "exclusivegateway",
+            "component_type": "router",
+        })
+
+    subprocesses = [
+        clean_text(process.get("name")) or clean_text(process.get("id")) or "Sottoprocesso"
+        for process in order_processes(processes)
+        if process.get("id") != integration_process.get("id")
+    ][:4]
+
+    background = "#F7F9FC"
+    text_dark = "#182433"
+    text_mid = "#607085"
+    text_light = "#8995A5"
+    line_color = "#AAB8C8"
+    border_color = "#D5DEE9"
+    source_fill, source_border, source_accent = "#EAF3FF", "#3E8DDD", "#1677D2"
+    process_fill, process_border, process_accent = "#FFFFFF", "#2C79C9", "#1268BA"
+    subprocess_fill, subprocess_border, subprocess_accent = "#F7F4FF", "#8B72D8", "#7457C6"
+    target_fill, target_border, target_accent = "#ECF8F2", "#42A66B", "#218950"
+
+    def load_font(candidates: list[str], size: int):
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                pass
+        return ImageFont.load_default()
+
+    regular_fonts = ["C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf"]
+    bold_fonts = ["C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf"]
+    font_title = load_font(bold_fonts, 34)
+    font_subtitle = load_font(regular_fonts, 17)
+    font_section = load_font(bold_fonts, 19)
+    font_name = load_font(bold_fonts, 22)
+    font_step = load_font(regular_fonts, 18)
+    font_badge = load_font(bold_fonts, 14)
+    font_small = load_font(regular_fonts, 14)
+
+    width = 1850
+    process_x, process_y, main_width = 90, 410, 950
+    process_header, step_height = 105, 78
+    process_height = process_header + len(important_steps) * step_height + 30
+    process_right, process_bottom = process_x + main_width, process_y + process_height
+    source_w, source_h = 500, 155
+    source_x, source_y = process_x + (main_width - source_w) // 2, 135
+    target_w, target_h = 500, 155
+    target_x = source_x
+    subprocess_x, subprocess_w, subprocess_h, subprocess_gap = 1190, 540, 110, 28
+    subprocess_start_y = process_y + 100
+    subprocess_total_h = len(subprocesses) * subprocess_h + max(0, len(subprocesses) - 1) * subprocess_gap
+    target_y = max(process_bottom + 150, subprocess_start_y + subprocess_total_h + 100)
+    target_bottom = target_y + target_h
+    height = max(1050, target_bottom + 110)
+    image = Image.new("RGB", (width, height), background)
+    draw = ImageDraw.Draw(image)
+
+    def rounded_box(left, top, right, bottom, fill, outline, radius=20, shadow=True, outline_width=2):
+        if shadow:
+            draw.rounded_rectangle((left + 7, top + 7, right + 7, bottom + 7), radius=radius, fill="#E1E7EF")
+        draw.rounded_rectangle((left, top, right, bottom), radius=radius, fill=fill, outline=outline, width=outline_width)
+
+    def draw_text_center(text, x, y, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        draw.text((x - text_width / 2, y - text_height / 2 - bbox[1]), text, font=font, fill=fill)
+
+    def draw_lines_center(lines, x, y, font, fill, gap=4):
+        heights = [draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines]
+        current_y = y - (sum(heights) + (len(lines) - 1) * gap) / 2
+        for line, line_height in zip(lines, heights):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            draw.text((x - (bbox[2] - bbox[0]) / 2, current_y), line, font=font, fill=fill)
+            current_y += line_height + gap
+
+    def draw_arrow(x1, y1, x2, y2, color=line_color, width_px=4):
+        import math
+        draw.line((x1, y1, x2, y2), fill=color, width=width_px)
+        angle = math.atan2(y2 - y1, x2 - x1)
+        length, half_width = 17, 8
+        draw.polygon([
+            (x2, y2),
+            (x2 - length * math.cos(angle) + half_width * math.sin(angle), y2 - length * math.sin(angle) - half_width * math.cos(angle)),
+            (x2 - length * math.cos(angle) - half_width * math.sin(angle), y2 - length * math.sin(angle) + half_width * math.cos(angle)),
+        ], fill=color)
+
+    def draw_pill(text, x, y, fill, outline, text_fill, font, padding_x=16, padding_y=8):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        pill_width = bbox[2] - bbox[0] + padding_x * 2
+        pill_height = bbox[3] - bbox[1] + padding_y * 2
+        draw.rounded_rectangle((x, y, x + pill_width, y + pill_height), radius=pill_height // 2, fill=fill, outline=outline, width=1)
+        draw_text_center(text, x + pill_width / 2, y + pill_height / 2, font, text_fill)
+        return pill_width, pill_height
+
+    def step_visual(step: dict) -> tuple[str, str, str]:
+        component = step["component_type"]
+        bpmn_type = step["bpmn_type"]
+        visuals = (
+            (("router" in component or "gateway" in bpmn_type), "#FFF3D9", "#D68A00", "ROUTER"),
+            ("groovy" in component, "#EAF7EF", "#26945D", "GROOVY"),
+            ("mapping" in component, "#EEF1FF", "#5366C6", "MAP"),
+            ("xslt" in component, "#F2EEFF", "#7959B8", "XSLT"),
+            ("content modifier" in component, "#EEF7FF", "#217BC1", "MOD"),
+            ("request reply" in component, "#FFF0F0", "#C85A5A", "REQ"),
+            ("splitter" in component, "#FFF4E8", "#D17A20", "SPLIT"),
+            ("gather" in component, "#F2F5F8", "#60758D", "GATHER"),
+            ("multicast" in component, "#F2F5F8", "#60758D", "MULTI"),
+        )
+        for matches, fill, accent, code in visuals:
+            if matches:
+                return fill, accent, code
+        return "#F0F5FA", "#52708D", "STEP"
+
+    draw_text_center("Integration Flow", width // 2, 42, font_title, text_dark)
+    draw_text_center("Rappresentazione funzionale dell'integrazione", width // 2, 78, font_subtitle, text_mid)
+
+    source_right, source_bottom = source_x + source_w, source_y + source_h
+    rounded_box(source_x, source_y, source_right, source_bottom, source_fill, source_border, radius=26)
+    draw.rounded_rectangle((source_x + 14, source_y + 15, source_x + 22, source_bottom - 15), radius=4, fill=source_accent)
+    draw_text_center("SOURCE SYSTEM", source_x + source_w // 2, source_y + 39, font_section, source_accent)
+    draw_lines_center(wrap_text(source_name, 36, 2), source_x + source_w // 2, source_y + 92, font_name, text_dark)
+    if input_adapter:
+        draw_pill(describe_adapter(input_adapter), source_right + 40, source_y + 60, "#FFFFFF", "#CBD5E1", text_mid, font_badge)
+
+    center_x = process_x + main_width // 2
+    draw_arrow(center_x, source_bottom + 15, center_x, process_y - 20)
+    rounded_box(process_x, process_y, process_right, process_bottom, process_fill, process_border, radius=28, outline_width=3)
+    draw.rounded_rectangle((process_x + 16, process_y + 17, process_x + 25, process_bottom - 17), radius=4, fill=process_accent)
+    draw_text_center("INTEGRATION PROCESS", center_x, process_y + 34, font_section, process_accent)
+    draw_text_center(process_name, center_x, process_y + 72, font_name, text_dark)
+    separator_y = process_y + process_header
+    draw.line((process_x + 35, separator_y, process_right - 35, separator_y), fill=border_color, width=2)
+
+    timeline_x, step_left, step_right = process_x + 72, process_x + 105, process_right - 35
+    step_start_y = separator_y + 20
+    for index, step in enumerate(important_steps):
+        row_y = step_start_y + index * step_height
+        row_center = row_y + step_height // 2
+        if index < len(important_steps) - 1:
+            draw.line((timeline_x, row_center + 19, timeline_x, row_center + step_height - 3), fill="#C5D3E1", width=3)
+        draw.ellipse((timeline_x - 20, row_center - 20, timeline_x + 20, row_center + 20), fill=process_accent)
+        draw_text_center(str(index + 1), timeline_x, row_center, font_badge, "#FFFFFF")
+        card_top, card_bottom = row_y + 7, row_y + step_height - 7
+        rounded_box(step_left, card_top, step_right, card_bottom, "#F8FBFF", "#E0E8F1", radius=16, shadow=False, outline_width=1)
+        visual_fill, visual_accent, visual_code = step_visual(step)
+        badge_width, _ = draw_pill(visual_code, step_left + 18, card_top + 17, visual_fill, visual_fill, visual_accent, font_badge, 13, 6)
+        type_text = clean_text(step["type"])
+        type_width = 0
+        if type_text:
+            type_bbox = draw.textbbox((0, 0), type_text, font=font_small)
+            type_width = type_bbox[2] - type_bbox[0] + 30
+            draw_text_center(type_text, step_right - type_width / 2, row_center, font_small, text_light)
+        name_left = step_left + 18 + badge_width + 24
+        name_right = step_right - type_width - 18
+        draw_lines_center(wrap_text(step["name"], 46, 2), (name_left + name_right) / 2, row_center, font_step, text_dark, 3)
+
+    if subprocesses:
+        draw_text_center("CALLED SUBPROCESSES", subprocess_x + subprocess_w // 2, subprocess_start_y - 26, font_section, subprocess_accent)
+        bus_x = process_right + 70
+        process_branch_y = process_y + process_height // 2
+        last_branch_y = subprocess_start_y + (len(subprocesses) - 1) * (subprocess_h + subprocess_gap) + subprocess_h // 2
+        draw.line((process_right, process_branch_y, bus_x, process_branch_y), fill="#A9B8C8", width=3)
+        draw.line((bus_x, min(process_branch_y, subprocess_start_y + subprocess_h // 2), bus_x, max(process_branch_y, last_branch_y)), fill="#A9B8C8", width=3)
+        for index, subprocess_name in enumerate(subprocesses):
+            box_top = subprocess_start_y + index * (subprocess_h + subprocess_gap)
+            box_bottom = box_top + subprocess_h
+            box_center_y = box_top + subprocess_h // 2
+            draw_arrow(bus_x, box_center_y, subprocess_x - 20, box_center_y, "#A9B8C8", 3)
+            rounded_box(subprocess_x, box_top, subprocess_x + subprocess_w, box_bottom, subprocess_fill, subprocess_border, radius=20)
+            draw.rounded_rectangle((subprocess_x + 14, box_top + 14, subprocess_x + 22, box_bottom - 14), radius=4, fill=subprocess_accent)
+            draw_pill("SUBPROCESS", subprocess_x + 34, box_top + 15, "#E8E1FA", "#E8E1FA", subprocess_accent, font_badge, 12, 5)
+            draw_lines_center(wrap_text(subprocess_name, 42, 2), subprocess_x + subprocess_w // 2, box_top + 72, font_step, text_dark, 3)
+
+    target_center_x = target_x + target_w // 2
+    draw_arrow(center_x, process_bottom + 20, target_center_x, target_y - 20)
+    target_right = target_x + target_w
+    rounded_box(target_x, target_y, target_right, target_bottom, target_fill, target_border, radius=26)
+    draw.rounded_rectangle((target_x + 14, target_y + 15, target_x + 22, target_bottom - 15), radius=4, fill=target_accent)
+    draw_text_center("TARGET SYSTEM", target_center_x, target_y + 39, font_section, target_accent)
+    draw_lines_center(wrap_text(target_name, 36, 2), target_center_x, target_y + 92, font_name, text_dark)
+    if output_adapter:
+        draw_pill(describe_adapter(output_adapter), target_right + 40, target_y + 60, "#FFFFFF", "#CBD5E1", text_mid, font_badge)
+
+    legend_items = [
+        (source_accent, "Source"),
+        (process_accent, "CPI Processing"),
+        (subprocess_accent, "Subprocess"),
+        (target_accent, "Target"),
+    ]
+    measurements = []
+    for color, label in legend_items:
+        bbox = draw.textbbox((0, 0), label, font=font_small)
+        measurements.append((color, label, 18 + 10 + bbox[2] - bbox[0] + 35))
+    cursor_x = (width - sum(item_width for _, _, item_width in measurements)) // 2
+    legend_y = target_bottom + 55
+    for color, label, item_width in measurements:
+        draw.rounded_rectangle((cursor_x, legend_y - 6, cursor_x + 18, legend_y + 12), radius=8, fill=color)
+        draw.text((cursor_x + 28, legend_y - 9), label, font=font_small, fill=text_mid)
+        cursor_x += item_width
+
+    image_stream = BytesIO()
+    image.save(image_stream, format="PNG", optimize=True)
+    image_stream.seek(0)
+    doc.add_heading("Diagramma del flusso", level=1)
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.add_run().add_picture(image_stream, width=Pt(500))
+    caption = doc.add_paragraph()
+    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    caption_run = caption.add_run(
+        "Rappresentazione semplificata dei sistemi, del processo principale e dei sottoprocessi richiamati."
+    )
+    caption_run.font.size = Pt(9)
+    caption_run.font.color.rgb = RGBColor(0x89, 0x95, 0xA5)
 
 def add_bold_markdown_paragraph(doc, text: str):
     paragraph = doc.add_paragraph()
