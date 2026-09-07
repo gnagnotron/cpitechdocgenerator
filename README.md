@@ -1,6 +1,15 @@
 # SAP iFlow Doc Generator
 
-Web app per generare un unico documento tecnico da ZIP SAP Integration Flow.
+GUI Python per caricare un ZIP SAP Integration Flow e scaricare il documento `.docx` e il modello JSON generati direttamente da `scpi_iflow_doc_generator.py`.
+
+## Avvio GUI Python
+
+```bash
+py -m pip install -r requirements.txt
+py app.py
+```
+
+Apri `http://localhost:5000`. Su Render il file `render.yaml` installa le dipendenze Python e avvia automaticamente `gunicorn`.
 
 ## Feature
 
