@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { listLocalSessionMeta, saveLocalSessionMeta } from "@/lib/client/session-history";
 import { getLocaleMessages, supportedLanguages } from "@/lib/locales";
-import { defaultTemplateIds, templateDefinitions } from "@/lib/templates/definitions";
 import type {
-  DocumentTemplateId,
   GeneratedDocument,
   GeneratedSessionMeta,
-  GenerationMode,
   LanguageCode,
   QualityGateReport,
   StructuredWarning,
@@ -21,13 +18,7 @@ type ApiSuccess = {
   documents: GeneratedDocument[];
   bundleBase64: string;
   locale: LanguageCode;
-  mode: GenerationMode;
-  selectedTemplateIds: DocumentTemplateId[];
   qualityGate: QualityGateReport;
-  aiReport: {
-    enabled: boolean;
-    fallbackReason?: string;
-  };
 };
 
 type SessionResponse = GeneratedSessionMeta & {
@@ -58,8 +49,6 @@ const downloadText = (fileName: string, content: string, type: string) => {
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [language, setLanguage] = useState<LanguageCode>("it");
-  const [mode, setMode] = useState<GenerationMode>("deterministic");
-  const [selectedTemplateIds, setSelectedTemplateIds] = useState<DocumentTemplateId[]>(defaultTemplateIds);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<StructuredWarning[]>([]);
@@ -67,21 +56,15 @@ export default function Home() {
   const [bundleBase64, setBundleBase64] = useState("");
   const [activeDoc, setActiveDoc] = useState(0);
   const [previewMode, setPreviewMode] = useState<"markdown" | "html">("markdown");
-  const [activeTab, setActiveTab] = useState<"upload" | "template" | "history">("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "history">("upload");
   const [serverSessions, setServerSessions] = useState<GeneratedSessionMeta[]>([]);
   const [localSessions, setLocalSessions] = useState<GeneratedSessionMeta[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sharePath, setSharePath] = useState("");
   const [qualityGate, setQualityGate] = useState<QualityGateReport | null>(null);
-  const [aiFallbackReason, setAiFallbackReason] = useState<string | null>(null);
-  const [isAIConfigured, setIsAIConfigured] = useState<boolean | null>(null);
   const locale = getLocaleMessages(language);
 
   const activeDocument = documents[activeDoc];
-  const estimatedSeconds = useMemo(() => {
-    const base = selectedTemplateIds.reduce((total, templateId) => total + templateDefinitions[templateId].estimatedSeconds, 0);
-    return mode === "ai-enhanced" ? base + 20 : base;
-  }, [mode, selectedTemplateIds]);
 
   const refreshSessions = async () => {
     try {
@@ -102,25 +85,6 @@ export default function Home() {
       setLanguage(storedLanguage);
     }
     refreshSessions();
-  }, []);
-
-  useEffect(() => {
-    const detectAIConfiguration = async () => {
-      try {
-        const response = await fetch("/api/ai/status", { cache: "no-store" });
-        if (!response.ok) {
-          setIsAIConfigured(null);
-          return;
-        }
-
-        const payload = (await response.json()) as { configured?: boolean };
-        setIsAIConfigured(Boolean(payload.configured));
-      } catch {
-        setIsAIConfigured(null);
-      }
-    };
-
-    detectAIConfiguration();
   }, []);
 
   useEffect(() => {
@@ -145,8 +109,6 @@ export default function Home() {
         setWarnings(payload.warnings);
         setQualityGate(payload.qualityGate);
         setLanguage(payload.language);
-        setMode(payload.mode);
-        setSelectedTemplateIds(payload.templateIds);
         setSessionId(payload.id);
         setSharePath(payload.sharePath);
         setActiveDoc(0);
@@ -158,7 +120,7 @@ export default function Home() {
     loadSharedSession();
   }, []);
 
-  const canGenerate = Boolean(file) && !loading && selectedTemplateIds.length > 0;
+  const canGenerate = Boolean(file) && !loading;
 
   const handleSubmit = async () => {
     if (!file) {
@@ -170,16 +132,11 @@ export default function Home() {
     setWarnings([]);
     setDocuments([]);
     setBundleBase64("");
-    setAiFallbackReason(null);
 
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("language", language);
-      formData.append("mode", mode);
-      for (const templateId of selectedTemplateIds) {
-        formData.append("templateIds", templateId);
-      }
 
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -199,16 +156,15 @@ export default function Home() {
       setSessionId(success.sessionId);
       setSharePath(success.sharePath);
       setQualityGate(success.qualityGate);
-      setAiFallbackReason(success.aiReport.fallbackReason ?? null);
 
       await saveLocalSessionMeta({
         id: success.sessionId,
         createdAt: new Date().toISOString(),
         fileName: file.name,
         language,
-        mode,
-        templateIds: selectedTemplateIds,
-        aiUsed: success.aiReport.enabled,
+        mode: "deterministic",
+        templateIds: ["technical"],
+        aiUsed: false,
         sharePath: success.sharePath,
       });
       await refreshSessions();
@@ -227,14 +183,6 @@ export default function Home() {
       setFile(dropped);
       setError(null);
     }
-  };
-
-  const toggleTemplate = (templateId: DocumentTemplateId) => {
-    setSelectedTemplateIds((current) =>
-      current.includes(templateId)
-        ? current.filter((item) => item !== templateId)
-        : [...current, templateId],
-    );
   };
 
   const copyShareLink = async () => {
@@ -270,31 +218,11 @@ export default function Home() {
               </select>
             </label>
 
-            <label className="text-sm font-medium text-slate-700">
-              {locale.ui.labels.mode}
-              <select
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                value={mode}
-                onChange={(event) => setMode(event.target.value as GenerationMode)}
-              >
-                <option value="deterministic">{locale.ui.labels.deterministic}</option>
-                <option value="ai-enhanced">{locale.ui.labels.aiEnhanced}</option>
-              </select>
-            </label>
-
-            <p className="text-xs text-slate-500">
-              {locale.ui.labels.estimatedTime}: ~{estimatedSeconds}s
-            </p>
-            {mode === "ai-enhanced" && isAIConfigured === false && (
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                {locale.ui.labels.aiUnavailable}
-              </p>
-            )}
           </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
-          {(["upload", "template", "history"] as const).map((tab) => (
+          {(["upload", "history"] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -310,7 +238,7 @@ export default function Home() {
       </section>
 
       {activeTab === "upload" && (
-        <section className="grid gap-6 md:grid-cols-[1.1fr_0.9fr]">
+        <section>
           <div className="panel p-5">
             <div
               className="rounded-xl border border-dashed border-cyan-400 bg-cyan-50/40 p-6 text-center"
@@ -337,32 +265,6 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="panel p-5">
-            <h2 className="text-lg font-semibold">{locale.ui.labels.templates}</h2>
-            <div className="mt-4 grid gap-3">
-              {(Object.keys(templateDefinitions) as DocumentTemplateId[]).map((templateId) => {
-                const template = templateDefinitions[templateId];
-                const selected = selectedTemplateIds.includes(templateId);
-                return (
-                  <label
-                    key={templateId}
-                    className={`flex items-start gap-3 rounded-xl border p-3 ${selected ? "border-cyan-500 bg-cyan-50" : "border-slate-200 bg-white"}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleTemplate(templateId)}
-                      className="mt-1"
-                    />
-                    <span>
-                      <span className="block text-sm font-semibold text-slate-900">{locale.ui.templates[templateId]}</span>
-                      <span className="block text-xs text-slate-500">~{template.estimatedSeconds}s</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
         </section>
       )}
 
@@ -409,15 +311,10 @@ export default function Home() {
         </section>
       )}
 
-      {(error || warnings.length > 0 || aiFallbackReason || qualityGate) && (
+      {(error || warnings.length > 0 || qualityGate) && (
         <section className="panel p-5">
           <h2 className="text-lg font-semibold">Warnings / Errors</h2>
           {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-          {aiFallbackReason && (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              AI fallback: {aiFallbackReason}
-            </div>
-          )}
           {qualityGate && (
             <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
               Quality gate: {(qualityGate.score * 100).toFixed(0)}%

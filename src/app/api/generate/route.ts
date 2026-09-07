@@ -11,8 +11,6 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const file = formData.get("file");
     const language = formData.get("language");
-    const mode = formData.get("mode");
-    const templateIds = formData.getAll("templateIds").filter((value): value is string => typeof value === "string");
 
     if (!(file instanceof File)) {
       return NextResponse.json(
@@ -44,8 +42,6 @@ export async function POST(request: Request) {
     const sessionId = createSessionId();
     const result = await generateFromZipBuffer(zipBuffer, {
       language: typeof language === "string" ? (language as "it" | "en" | "fr" | "de") : undefined,
-      mode: typeof mode === "string" ? (mode as "deterministic" | "ai-enhanced") : undefined,
-      templateIds: templateIds.length ? (templateIds as Array<"technical" | "functional" | "handover" | "audit" | "training">) : undefined,
       sourceFileName: file.name,
       sessionId,
     });
@@ -78,7 +74,7 @@ export async function POST(request: Request) {
       language: result.locale,
       mode: result.mode,
       templateIds: result.selectedTemplateIds,
-      aiUsed: result.aiReport.enabled,
+      aiUsed: false,
       sharePath: `/?session=${sessionId}`,
       warnings: result.warnings,
       canonicalModel: result.canonicalModel,
@@ -97,7 +93,6 @@ export async function POST(request: Request) {
       locale: result.locale,
       mode: result.mode,
       selectedTemplateIds: result.selectedTemplateIds,
-      aiReport: result.aiReport,
       documents: result.documents,
       bundleBase64: outputZip.toString("base64"),
     });

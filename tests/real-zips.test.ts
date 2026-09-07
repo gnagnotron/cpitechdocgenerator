@@ -17,14 +17,12 @@ for (const fileName of cases) {
     const buffer = await readFile(join(zipDir, fileName));
     const result = await generateFromZipBuffer(buffer);
 
-    assert.equal(result.documents.length, 3);
+    assert.equal(result.documents.length, 1);
     assert.notEqual(result.canonicalModel.artifact.data.name, "Non determinabile da zip");
     assert.ok(result.canonicalModel.processi.data.length > 0);
     assert.ok(result.canonicalModel.stepERouting.data.length > 0);
     assert.ok(result.documents[0].markdown.includes("Provenance"));
-    assert.equal(result.documents[1].templateId, "functional");
-    assert.equal(result.documents[2].templateId, "handover");
-    assert.ok(result.documents[1].markdown.includes("Documento Funzionale"));
-    assert.ok(result.documents[2].markdown.includes("Documento Handover"));
+    assert.equal(result.documents[0].templateId, "technical");
+    assert.ok(result.documents[0].markdown.includes("Documento Tecnico"));
   });
 }

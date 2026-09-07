@@ -6,7 +6,7 @@ export const enLocale: LocaleMessages = {
     appName: "SAP CPI Doc Forge",
     headline: "iFlow ZIP to Documentation",
     subtitle:
-      "Upload a SAP Integration Flow ZIP export and generate multi-template documentation in deterministic or AI-enhanced mode.",
+      "Upload a SAP Integration Flow ZIP export and generate the technical document from package-extracted data.",
     tabs: {
       upload: "Upload",
       template: "Templates",

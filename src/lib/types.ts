@@ -1,4 +1,4 @@
-export type Provenance = "file-extracted" | "rule-based" | "ai-generated";
+export type Provenance = "file-extracted" | "rule-based";
 
 export interface CanonicalSection<T> {
   provenance: Provenance;
@@ -115,7 +115,7 @@ export interface GeneratedDocument {
 
 export type LanguageCode = "it" | "en" | "fr" | "de";
 
-export type GenerationMode = "deterministic" | "ai-enhanced";
+export type GenerationMode = "deterministic";
 
 export type DocumentTemplateId =
   | "technical"
@@ -129,7 +129,6 @@ export interface TemplateDefinition {
   outputName: string;
   defaultSelected: boolean;
   estimatedSeconds: number;
-  aiEnhanceable: boolean;
   requiredHeadings: string[];
 }
 
@@ -174,27 +173,13 @@ export interface SessionRecord extends GeneratedSessionMeta {
 
 export interface GenerateDocumentsOptions {
   language?: LanguageCode;
-  templateIds?: DocumentTemplateId[];
-  mode?: GenerationMode;
   sessionId?: string;
   sourceFileName?: string;
-}
-
-export interface AIEnhancementReport {
-  enabled: boolean;
-  provider: string;
-  model: string;
-  fallbackReason?: string;
-  durationMs: number;
-  promptTokensApprox: number;
-  completionTokensApprox: number;
 }
 
 export interface PublicGenerateRequest {
   zipBase64: string;
   language?: LanguageCode;
-  templateIds?: DocumentTemplateId[];
-  mode?: GenerationMode;
 }
 
 export interface FlowGraph {
@@ -243,5 +228,4 @@ export interface GenerationResult {
   locale: LanguageCode;
   mode: GenerationMode;
   selectedTemplateIds: DocumentTemplateId[];
-  aiReport: AIEnhancementReport;
 }

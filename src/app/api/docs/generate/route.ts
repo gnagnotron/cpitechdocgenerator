@@ -27,8 +27,6 @@ export async function POST(request: Request) {
     const zipBuffer = Buffer.from(body.zipBase64, "base64");
     const result = await generateFromZipBuffer(zipBuffer, {
       language: body.language,
-      templateIds: body.templateIds,
-      mode: body.mode,
       sessionId,
       sourceFileName: "api-upload.zip",
     });
@@ -50,7 +48,7 @@ export async function POST(request: Request) {
       language: result.locale,
       mode: result.mode,
       templateIds: result.selectedTemplateIds,
-      aiUsed: result.aiReport.enabled,
+      aiUsed: false,
       sharePath: `/?session=${sessionId}`,
       warnings: result.warnings,
       canonicalModel: result.canonicalModel,
@@ -69,7 +67,6 @@ export async function POST(request: Request) {
       locale: result.locale,
       mode: result.mode,
       selectedTemplateIds: result.selectedTemplateIds,
-      aiReport: result.aiReport,
       documents: result.documents,
       bundleBase64: outputZip.toString("base64"),
     });

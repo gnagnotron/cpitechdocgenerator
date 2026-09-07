@@ -1,6 +1,4 @@
 import { AppError } from "../errors.ts";
-import { AIDocumentEnhancer } from "../ai-enhancer.ts";
-import { enrichCanonicalModelWithAI } from "../semantic-enricher.ts";
 import { getLocaleMessages } from "../locales/index.ts";
 import { logWarning } from "../logger.ts";
 import { parseIflw } from "../parsers/iflw.ts";
@@ -8,7 +6,6 @@ import { parseMmap } from "../parsers/mmap.ts";
 import { parseManifest, parseParameterDefinitions, parseProperties } from "../parsers/text.ts";
 import { readZipEntries } from "../parsers/zip.ts";
 import { fileParserPlugins } from "../plugins/registry.ts";
-import { defaultTemplateIds } from "../templates/definitions.ts";
 import { compileTemplate } from "../templates/registry.ts";
 import type {
   CanonicalModel,
@@ -1313,50 +1310,28 @@ const createDocuments = async (
   parsed: ParsedZipArtifacts,
   model: CanonicalModel,
   language: LanguageCode,
-  templateIds: DocumentTemplateId[],
   mode: GenerationMode,
-): Promise<{ documents: GeneratedDocument[]; aiReport: GenerationResult["aiReport"] }> => {
+): Promise<GeneratedDocument[]> => {
   const locale = getLocaleMessages(language);
   const context = buildTemplateContext(parsed, model, locale);
 
-  const introByTemplate: Record<DocumentTemplateId, string> = {
-    technical: locale.docs.text.technicalIntro,
-    functional: locale.docs.text.functionalIntro,
-    handover: locale.docs.text.handoverIntro,
-    audit: locale.docs.text.auditIntro,
-    training: locale.docs.text.trainingIntro,
-  };
-
-  const documents = templateIds.map((templateId) => {
-    const template = compileTemplate(templateId);
-    const title = `${model.artifact.data.name} - ${locale.ui.templates[templateId]}`;
-    const markdown = template({
-      ...context,
-      title,
-      intro: introByTemplate[templateId].replace("{{inputs}}", context.inputs.join("; ") || "n/a"),
-    });
-
-    return {
-      name: locale.ui.docFileNames[templateId],
-      markdown,
-      html: markdownToHtml(markdown),
-      templateId,
-      displayName: locale.ui.templates[templateId],
-      language,
-      mode,
-    } satisfies GeneratedDocument;
+  const templateId: DocumentTemplateId = "technical";
+  const template = compileTemplate(templateId);
+  const markdown = template({
+    ...context,
+    title: `${model.artifact.data.name} - ${locale.ui.templates[templateId]}`,
+    intro: locale.docs.text.technicalIntro.replace("{{inputs}}", context.inputs.join("; ") || "n/a"),
   });
 
-  const enhancer = new AIDocumentEnhancer();
-  const enhanced = await enhancer.enhanceDocuments(documents, locale, language, mode);
-
-  return {
-    documents: enhanced.documents.map((document) => ({
-      ...document,
-      html: markdownToHtml(document.markdown),
-    })),
-    aiReport: enhanced.report,
-  };
+  return [{
+    name: locale.ui.docFileNames[templateId],
+    markdown,
+    html: markdownToHtml(markdown),
+    templateId,
+    displayName: locale.ui.templates[templateId],
+    language,
+    mode,
+  } satisfies GeneratedDocument];
 };
 
 const buildFlowGraph = (parsed: ParsedZipArtifacts): FlowGraph => {
@@ -1481,18 +1456,12 @@ export const generateFromZipBuffer = async (
   options: GenerateDocumentsOptions = {},
 ): Promise<GenerationResult> => {
   const parsed = parseZipArtifacts(zipBuffer);
-  let canonicalModel = buildCanonicalModel(parsed);
-
-  // Apply semantic enrichment with AI (optional, fallback to deterministic)
-  const enrichedModel = await enrichCanonicalModelWithAI(parsed, canonicalModel);
-  if (enrichedModel) {
-    canonicalModel = enrichedModel;
-  }
+  const canonicalModel = buildCanonicalModel(parsed);
 
   const locale = options.language ?? "it";
-  const mode = options.mode ?? "deterministic";
-  const selectedTemplateIds = options.templateIds?.length ? options.templateIds : defaultTemplateIds;
-  const { documents, aiReport } = await createDocuments(parsed, canonicalModel, locale, selectedTemplateIds, mode);
+  const mode: GenerationMode = "deterministic";
+  const selectedTemplateIds: DocumentTemplateId[] = ["technical"];
+  const documents = await createDocuments(parsed, canonicalModel, locale, mode);
   const flowGraph = buildFlowGraph(parsed);
   const qualityGate = evaluateQualityGate(documents, canonicalModel, selectedTemplateIds);
 
@@ -1514,6 +1483,5 @@ export const generateFromZipBuffer = async (
     locale,
     mode,
     selectedTemplateIds,
-    aiReport,
   };
 };
