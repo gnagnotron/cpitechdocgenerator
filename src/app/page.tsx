@@ -47,7 +47,7 @@ const downloadText = (fileName: string, content: string, type: string) => {
 };
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [language, setLanguage] = useState<LanguageCode>("it");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,10 +120,10 @@ export default function Home() {
     loadSharedSession();
   }, []);
 
-  const canGenerate = Boolean(file) && !loading;
+  const canGenerate = files.length > 0 && !loading;
 
   const handleSubmit = async () => {
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
@@ -135,7 +135,7 @@ export default function Home() {
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      files.forEach((file) => formData.append("files", file));
       formData.append("language", language);
 
       const response = await fetch("/api/generate", {
@@ -160,7 +160,7 @@ export default function Home() {
       await saveLocalSessionMeta({
         id: success.sessionId,
         createdAt: new Date().toISOString(),
-        fileName: file.name,
+        fileName: files.map((file) => file.name).join(", "),
         language,
         mode: "deterministic",
         templateIds: ["technical"],
@@ -178,9 +178,11 @@ export default function Home() {
 
   const onDrop: React.DragEventHandler<HTMLDivElement> = (event) => {
     event.preventDefault();
-    const dropped = event.dataTransfer.files?.[0];
-    if (dropped) {
-      setFile(dropped);
+    const dropped = Array.from(event.dataTransfer.files ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith(".zip"),
+    );
+    if (dropped.length > 0) {
+      setFiles(dropped);
       setError(null);
     }
   };
@@ -249,10 +251,22 @@ export default function Home() {
               <input
                 type="file"
                 accept=".zip"
+                multiple
                 className="mt-4 block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                onChange={(event) => {
+                  setFiles(Array.from(event.target.files ?? []));
+                  setError(null);
+                }}
               />
-              <p className="mono mt-3 text-xs text-slate-600">{file ? file.name : locale.ui.labels.noFile}</p>
+              <div className="mono mt-3 text-left text-xs text-slate-600">
+                {files.length > 0 ? (
+                  <ul className="space-y-1">
+                    {files.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
+                  </ul>
+                ) : (
+                  locale.ui.labels.noFile
+                )}
+              </div>
             </div>
 
             <button
