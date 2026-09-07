@@ -2,6 +2,7 @@
 """
 SAP Cloud Integration iFlow - Generatore documentazione v4
 Migliorie: tabella CITS, colonna Transform, Resource Inventory Used/Not used
+sadsa
 Uso: pip install python-docx && python scpi_iflow_doc_generator.py
 """
 from __future__ import annotations
