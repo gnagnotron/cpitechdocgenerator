@@ -2284,11 +2284,16 @@ def add_flow_diagram(doc, model: dict):
         draw.text((x - text_width / 2, y - text_height / 2 - bbox[1]), text, font=font, fill=fill)
 
     def draw_lines_center(lines, x, y, font, fill, gap=4):
-        heights = [draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines]
+        boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+        heights = [box[3] - box[1] for box in boxes]
         current_y = y - (sum(heights) + (len(lines) - 1) * gap) / 2
-        for line, line_height in zip(lines, heights):
-            bbox = draw.textbbox((0, 0), line, font=font)
-            draw.text((x - (bbox[2] - bbox[0]) / 2, current_y), line, font=font, fill=fill)
+        for line, line_height, bbox in zip(lines, heights, boxes):
+            draw.text(
+                (x - (bbox[2] - bbox[0]) / 2, current_y - bbox[1]),
+                line,
+                font=font,
+                fill=fill,
+            )
             current_y += line_height + gap
 
     def draw_arrow(x1, y1, x2, y2, color=line_color, width_px=4):
