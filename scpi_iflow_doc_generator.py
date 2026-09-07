@@ -1277,6 +1277,21 @@ def parse_mappings(files: dict[str, bytes]) -> list[dict]:
                 return True
             if normalized_key in ("status", "state") and normalized_value in ("disabled", "inactive", "off"):
                 return True
+        for child in node.iter():
+            if child is node or normalize_key(local_name(child.tag)) != "property":
+                continue
+            property_name = normalize_key(
+                child.attrib.get("name")
+                or child.attrib.get("key")
+                or child.attrib.get("id")
+            )
+            property_value = clean_text(
+                child.attrib.get("value") or "".join(child.itertext())
+            ).lower()
+            if property_name in ("switchedoff", "disabled", "inactive") and property_value in ("true", "1", "yes"):
+                return True
+            if property_name in ("enabled", "active") and property_value in ("false", "0", "no"):
+                return True
         return False
 
     mappings = []
