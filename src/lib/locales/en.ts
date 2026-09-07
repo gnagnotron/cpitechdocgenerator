@@ -21,7 +21,7 @@ export const enLocale: LocaleMessages = {
       estimatedTime: "Estimated time",
       generate: "Generate documentation",
       generating: "Generating...",
-      uploadHint: "Drag & drop iFlow ZIP or select it manually",
+      uploadHint: "Drag and drop multiple iFlow ZIPs or select them together",
       noFile: "No file selected",
       recentUploads: "Recent uploads",
       templates: "Templates to generate",

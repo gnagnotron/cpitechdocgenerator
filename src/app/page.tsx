@@ -46,6 +46,18 @@ const downloadText = (fileName: string, content: string, type: string) => {
   URL.revokeObjectURL(href);
 };
 
+const mergeZipFiles = (currentFiles: File[], newFiles: File[]) => {
+  const filesByKey = new Map(
+    currentFiles.map((file) => [`${file.name}-${file.size}-${file.lastModified}`, file]),
+  );
+  newFiles.forEach((file) => {
+    if (file.name.toLowerCase().endsWith(".zip")) {
+      filesByKey.set(`${file.name}-${file.size}-${file.lastModified}`, file);
+    }
+  });
+  return Array.from(filesByKey.values());
+};
+
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [language, setLanguage] = useState<LanguageCode>("it");
@@ -182,7 +194,7 @@ export default function Home() {
       file.name.toLowerCase().endsWith(".zip"),
     );
     if (dropped.length > 0) {
-      setFiles(dropped);
+      setFiles((currentFiles) => mergeZipFiles(currentFiles, dropped));
       setError(null);
     }
   };
@@ -254,7 +266,10 @@ export default function Home() {
                 multiple
                 className="mt-4 block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
                 onChange={(event) => {
-                  setFiles(Array.from(event.target.files ?? []));
+                  setFiles((currentFiles) =>
+                    mergeZipFiles(currentFiles, Array.from(event.target.files ?? [])),
+                  );
+                  event.target.value = "";
                   setError(null);
                 }}
               />
