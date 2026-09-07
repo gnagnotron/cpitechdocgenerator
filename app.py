@@ -44,17 +44,39 @@ PAGE = """<!doctype html>
     <header>
       <div class="eyebrow">SAP Cloud Integration</div>
       <h1>iFlow Documentation Generator</h1>
-      <p class="lead">Carica un export ZIP di un iFlow SAP CPI. Verranno generati il documento Word e il modello JSON estratti direttamente dallo script Python.</p>
+      <p class="lead">Carica uno o piu export ZIP di iFlow SAP CPI. Per ogni package verranno generati il documento Word e il modello JSON.</p>
     </header>
     <form method="post" action="/generate" enctype="multipart/form-data">
-      <label for="file">ZIP iFlow</label>
-      <input id="file" name="file" type="file" accept=".zip,application/zip" required>
+      <label for="files">ZIP iFlow</label>
+      <input id="files" name="files" type="file" accept=".zip,application/zip" multiple required>
+      <div id="selected-files" class="note">Nessun ZIP selezionato.</div>
       <button type="submit">Genera documentazione</button>
     </form>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
     <div class="note">L'output scaricato contiene <strong>docs/*.docx</strong> e <strong>json/*_parsed.json</strong>, prodotti dalla stessa logica del generatore Python.</div>
     <footer>Nessun servizio AI o configurazione API e richiesta.</footer>
   </main>
+  <script>
+    const input = document.getElementById("files");
+    const selectedFiles = new Map();
+    const selectedFilesLabel = document.getElementById("selected-files");
+
+    input.addEventListener("change", () => {
+      for (const file of input.files) {
+        const key = `${file.name}-${file.size}-${file.lastModified}`;
+        selectedFiles.set(key, file);
+      }
+
+      const dataTransfer = new DataTransfer();
+      for (const file of selectedFiles.values()) {
+        dataTransfer.items.add(file);
+      }
+      input.files = dataTransfer.files;
+      selectedFilesLabel.textContent = selectedFiles.size === 0
+        ? "Nessun ZIP selezionato."
+        : `${selectedFiles.size} ZIP selezionati: ${Array.from(selectedFiles.values()).map((file) => file.name).join(", ")}`;
+    });
+  </script>
 </body>
 </html>"""
 
@@ -66,39 +88,66 @@ def index():
 
 @app.post("/generate")
 def generate():
-    uploaded = request.files.get("file")
-    if uploaded is None or not uploaded.filename:
+    uploaded_files = [
+        uploaded
+        for uploaded in request.files.getlist("files")
+        if uploaded.filename
+    ]
+    if not uploaded_files:
+        uploaded = request.files.get("file")
+        if uploaded is not None and uploaded.filename:
+            uploaded_files = [uploaded]
+
+    if not uploaded_files:
         return render_template_string(PAGE, error="Seleziona un file ZIP iFlow."), 400
 
-    file_name = secure_filename(uploaded.filename)
-    if not file_name.lower().endswith(".zip"):
+    if any(not uploaded.filename.lower().endswith(".zip") for uploaded in uploaded_files):
         return render_template_string(PAGE, error="Il file deve avere estensione .zip."), 400
 
     with tempfile.TemporaryDirectory(prefix="cpi-doc-") as work_dir:
         work_path = Path(work_dir)
-        input_zip = work_path / file_name
-        uploaded.save(input_zip)
+        archive_data = io.BytesIO()
 
         try:
-            model = generator.parse_iflow_zip(input_zip)
-            artifact_name = generator.safe_filename(
-                model["iflow"]["bundle_name"] or model["iflow"]["artifact_id"] or input_zip.stem
-            )
-            json_path = work_path / "json" / f"{artifact_name}_parsed.json"
-            docx_path = work_path / "docs" / f"{artifact_name}.docx"
-            json_path.parent.mkdir(parents=True, exist_ok=True)
-            json_path.write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
-            generator.generate_docx(model, docx_path)
+            with zipfile.ZipFile(archive_data, "w", zipfile.ZIP_DEFLATED) as archive:
+                for index, uploaded in enumerate(uploaded_files, 1):
+                    file_name = secure_filename(uploaded.filename)
+                    input_zip = work_path / f"{index:02d}-{file_name}"
+                    uploaded.save(input_zip)
+                    model = generator.parse_iflow_zip(input_zip)
+                    artifact_name = generator.safe_filename(
+                        model["iflow"]["bundle_name"]
+                        or model["iflow"]["artifact_id"]
+                        or input_zip.stem
+                    )
+                    output_dir = work_path / f"{index:02d}-{Path(file_name).stem}"
+                    json_path = output_dir / "json" / f"{artifact_name}_parsed.json"
+                    docx_path = output_dir / "docs" / f"{artifact_name}.docx"
+                    json_path.parent.mkdir(parents=True, exist_ok=True)
+                    docx_path.parent.mkdir(parents=True, exist_ok=True)
+                    json_path.write_text(
+                        json.dumps(model, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    generator.generate_docx(model, docx_path)
+                    archive.write(
+                        docx_path,
+                        arcname=f"{output_dir.name}/docs/{docx_path.name}",
+                    )
+                    archive.write(
+                        json_path,
+                        arcname=f"{output_dir.name}/json/{json_path.name}",
+                    )
         except (OSError, ValueError, zipfile.BadZipFile, generator.ET.ParseError, RuntimeError) as error:
             return render_template_string(PAGE, error=f"Generazione non riuscita: {error}"), 422
 
-        archive_data = io.BytesIO()
-        with zipfile.ZipFile(archive_data, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.write(docx_path, arcname=f"docs/{docx_path.name}")
-            archive.write(json_path, arcname=f"json/{json_path.name}")
         archive_data.seek(0)
 
-    download_name = f"{Path(file_name).stem}_documentation.zip"
+    download_name = (
+        f"{Path(secure_filename(uploaded_files[0].filename)).stem}_documentation.zip"
+        if len(uploaded_files) == 1
+        else "iflow-batch-documentation.zip"
+    )
     return send_file(archive_data, as_attachment=True, download_name=download_name, mimetype="application/zip")
 
 
