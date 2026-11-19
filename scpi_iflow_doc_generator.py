@@ -980,6 +980,14 @@ def parse_processes(root: ET.Element) -> list[dict]:
                 "bpmn_type": clean_text(element_type),
                 "called_element": clean_text(
                     el.attrib.get("calledElement") or el.attrib.get("calledelement")
+                ) or next(
+                    (
+                        clean_text(value)
+                        for key, value in props.items()
+                        if normalize_key(key) in ("calledelement", "processid")
+                        and clean_text(value)
+                    ),
+                    "",
                 ),
                 "documentation": get_direct_child_text(el, "documentation"),
                 "properties": props,
@@ -1534,6 +1542,49 @@ def describe_step_type(step: dict) -> str:
     }
     return bpmn_labels.get(bpmn_type, bpmn_type or "Step BPMN")
 
+def get_diagram_steps(process: dict) -> list[dict]:
+    diagram_steps = []
+    relevant_bpmn_types = {
+        "servicetask",
+        "scripttask",
+        "receivetask",
+        "sendtask",
+        "exclusivegateway",
+        "inclusivegateway",
+        "parallelgateway",
+    }
+    relevant_component_types = {
+        "content modifier",
+        "script groovy",
+        "message mapping",
+        "trasformazione xslt",
+        "process call",
+        "router",
+        "request reply",
+        "splitter",
+        "gather",
+        "multicast",
+        "content enricher",
+    }
+    for step in order_process_steps(process):
+        bpmn_type = clean_text(step.get("bpmn_type")).lower()
+        component_type = clean_text(step.get("component_type")).lower()
+        if bpmn_type in ("startevent", "endevent"):
+            continue
+        if (
+            bpmn_type in relevant_bpmn_types
+            or bpmn_type == "callactivity"
+            or component_type in relevant_component_types
+        ):
+            diagram_steps.append({
+                "name": clean_text(step.get("name")) or describe_step_type(step),
+                "type": describe_step_type(step),
+                "bpmn_type": bpmn_type,
+                "component_type": component_type,
+                "id": clean_text(step.get("id")),
+            })
+    return diagram_steps
+
 def build_client_section(model: dict) -> list[str]:
     paragraphs = []
     name = model["iflow"]["bundle_name"] or model["iflow"]["artifact_id"] or "L'integration flow"
@@ -1986,16 +2037,9 @@ def _add_flow_diagram_legacy(doc, model: dict):
     )
     process_name = clean_text(integration_process.get("name")) or clean_text(integration_process.get("id")) or "Integration Process"
 
-    important_steps = []
-    for step in order_process_steps(integration_process):
-        bpmn_type = clean_text(step.get("bpmn_type")).lower()
-        component_type = clean_text(step.get("component_type")).lower()
-        step_name = clean_text(step.get("name"))
-        if bpmn_type in ("startevent", "endevent", "callactivity"):
-            continue
-        if bpmn_type in ("servicetask", "scripttask", "receivetask", "sendtask", "exclusivegateway", "inclusivegateway", "parallelgateway") or component_type in ("content modifier", "script groovy", "message mapping", "trasformazione xslt", "router", "request reply", "splitter", "gather", "multicast", "content enricher"):
-            important_steps.append(step_name or describe_step_type(step))
-    important_steps = unique_list(important_steps)[:6]
+    important_steps = [
+        step["name"] for step in get_diagram_steps(integration_process)
+    ]
     if not important_steps:
         important_steps = ["Elaborazione dati"]
 
@@ -2198,28 +2242,7 @@ def add_flow_diagram(doc, model: dict):
         processes[0] if processes else {},
     )
     process_name = clean_text(integration_process.get("name")) or clean_text(integration_process.get("id")) or "Integration Process"
-    important_steps = []
-    for step in order_process_steps(integration_process):
-        bpmn_type = clean_text(step.get("bpmn_type")).lower()
-        component_type = clean_text(step.get("component_type")).lower()
-        if bpmn_type in ("startevent", "endevent", "callactivity"):
-            continue
-        relevant_bpmn_types = (
-            "servicetask", "scripttask", "receivetask", "sendtask",
-            "exclusivegateway", "inclusivegateway", "parallelgateway",
-        )
-        relevant_component_types = (
-            "content modifier", "script groovy", "message mapping", "trasformazione xslt",
-            "router", "request reply", "splitter", "gather", "multicast", "content enricher",
-        )
-        if bpmn_type in relevant_bpmn_types or component_type in relevant_component_types:
-            important_steps.append({
-                "name": clean_text(step.get("name")) or describe_step_type(step),
-                "type": describe_step_type(step),
-                "bpmn_type": bpmn_type,
-                "component_type": component_type,
-            })
-    important_steps = important_steps[:7]
+    important_steps = get_diagram_steps(integration_process)
     if not important_steps:
         important_steps = [{"name": "Elaborazione dati", "type": "Elaborazione", "bpmn_type": "", "component_type": ""}]
 
@@ -2435,7 +2458,7 @@ def add_flow_diagram(doc, model: dict):
     caption = doc.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
     caption_run = caption.add_run(
-        "Rappresentazione semplificata: i primi passaggi principali seguono l'ordine BPMN, "
+        "Rappresentazione semplificata: i passaggi principali seguono l'ordine BPMN, "
         "mentre le diramazioni sono appiattite; il dettaglio dei rami e nella sezione Decisioni e diramazioni. "
         "L'elenco completo degli step e disponibile nella sezione Processi di integrazione."
     )
