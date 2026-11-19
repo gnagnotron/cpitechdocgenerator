@@ -6,6 +6,7 @@ Uso: pip install python-docx && python scpi_iflow_doc_generator.py
 """
 from __future__ import annotations
 import hashlib
+import heapq
 import json
 import re
 import sys
@@ -1002,45 +1003,72 @@ def order_process_steps(process: dict) -> list[dict]:
     connections = process.get("connections", [])
     if not steps:
         return []
-    steps_by_id = {step["id"]: step for step in steps if step.get("id")}
+    steps_by_id = {
+        clean_text(step.get("id")): step
+        for step in steps
+        if clean_text(step.get("id"))
+    }
+    step_positions = {step_id: index for index, step_id in enumerate(steps_by_id)}
     outgoing: dict[str, list[str]] = {step_id: [] for step_id in steps_by_id}
+    incoming: dict[str, list[str]] = {step_id: [] for step_id in steps_by_id}
     incoming_count = {step_id: 0 for step_id in steps_by_id}
+    seen_edges = set()
     for connection in connections:
-        source_id = connection.get("source_ref")
-        target_id = connection.get("target_ref")
-        if source_id in steps_by_id and target_id in steps_by_id:
+        source_id = clean_text(connection.get("source_ref"))
+        target_id = clean_text(connection.get("target_ref"))
+        edge = (source_id, target_id)
+        if (
+            source_id in steps_by_id
+            and target_id in steps_by_id
+            and edge not in seen_edges
+        ):
+            seen_edges.add(edge)
             outgoing[source_id].append(target_id)
+            incoming[target_id].append(source_id)
             incoming_count[target_id] += 1
-    start_ids = [
-        step["id"]
-        for step in steps
-        if step.get("bpmn_type") == "startEvent" and step.get("id") in steps_by_id
+
+    start_ids = {
+        step_id
+        for step_id, step in steps_by_id.items()
+        if clean_text(step.get("bpmn_type")) == "startEvent"
+    }
+    ready = [
+        (0 if step_id in start_ids else 1, step_positions[step_id], step_id)
+        for step_id, count in incoming_count.items()
+        if count == 0
     ]
-    no_incoming_ids = [
-        step["id"]
-        for step in steps
-        if step.get("id") in steps_by_id
-        and incoming_count[step["id"]] == 0
-        and step["id"] not in start_ids
-    ]
-    queue = start_ids + no_incoming_ids
-    if not queue:
-        queue = [step["id"] for step in steps if step.get("id")]
+    heapq.heapify(ready)
     ordered = []
     visited = set()
-    while queue:
-        current_id = queue.pop(0)
-        if current_id in visited:
-            continue
+    while len(visited) < len(steps_by_id):
+        if ready:
+            _, _, current_id = heapq.heappop(ready)
+        else:
+            # Break one cycle at a time so its downstream steps remain ordered by dependencies.
+            pending = set(steps_by_id) - visited
+            current_id = min(pending, key=step_positions.__getitem__)
+            path = []
+            path_positions = {}
+            while current_id not in path_positions:
+                path_positions[current_id] = len(path)
+                path.append(current_id)
+                predecessors = [
+                    source_id
+                    for source_id in incoming[current_id]
+                    if source_id in pending
+                ]
+                current_id = min(predecessors, key=step_positions.__getitem__)
+            cycle = path[path_positions[current_id]:]
+            current_id = min(cycle, key=step_positions.__getitem__)
         visited.add(current_id)
         ordered.append(steps_by_id[current_id])
         for target_id in outgoing.get(current_id, []):
             incoming_count[target_id] -= 1
-            if incoming_count[target_id] <= 0 and target_id not in visited:
-                queue.append(target_id)
-    for step in steps:
-        if step.get("id") and step["id"] not in visited:
-            ordered.append(step)
+            if incoming_count[target_id] == 0 and target_id not in visited:
+                heapq.heappush(
+                    ready,
+                    (1, step_positions[target_id], target_id),
+                )
     return ordered
 
 def normalize_process_name(value: str) -> str:
@@ -1092,13 +1120,13 @@ def order_processes(processes: list[dict]) -> list[dict]:
 
 def find_router_details(processes: list[dict]) -> list[dict]:
     routers = []
-    for process in processes:
+    for process in order_processes(processes):
         connections_by_id = {
             connection["id"]: connection
             for connection in process["connections"]
             if connection.get("id")
         }
-        for step in process["steps"]:
+        for step in order_process_steps(process):
             if step["bpmn_type"] not in ("exclusiveGateway", "inclusiveGateway"):
                 continue
             routes = []
@@ -1219,12 +1247,12 @@ def classify_xslt(root: ET.Element, stem: str) -> list[str]:
 
 # ── Groovy parser ────────────────────────────────────────────────────────
 PURPOSE_PATTERNS = {
-    "buildRows": "Costruisce le righe strutturate del payload, separando taglie e colori per l'invio a SAP",
+    "buildRows": "Costruisce le righe strutturate del payload, separando taglie e colori per il sistema destinatario",
     "checkProperty": "Verifica che un campo esista e sia valorizzato prima di proseguire l'elaborazione",
-    "checkUOM": "Controlla che le unità di misura ricevute siano valide e coerenti con quelle attese da SAP",
-    "convertStringToBoolean": "Converte valori testuali (true/false) nel formato booleano richiesto da SAP",
-    "mapFiberCode": "Traduce i codici fibra da Centric ai codici standard SAP",
-    "removeFieldsUpdate": "In caso di aggiornamento, rimuove i campi che non devono essere modificati per evitare errori su SAP",
+    "checkUOM": "Controlla che le unità di misura ricevute siano valide e coerenti con quelle attese dal sistema destinatario",
+    "convertStringToBoolean": "Converte valori testuali (true/false) nel formato booleano richiesto dal sistema destinatario",
+    "mapFiberCode": "Traduce i codici specifici del sistema sorgente nei codici attesi dal sistema destinatario",
+    "removeFieldsUpdate": "In caso di aggiornamento, rimuove i campi che non devono essere modificati per evitare errori sul sistema destinatario",
 }
 
 def guess_script_purpose(name: str, functions: list[str], strings: list[str]) -> str:
@@ -1414,9 +1442,9 @@ def detect_resource_usage(
     participants: list[dict],
 ) -> list[dict]:
     search_texts: list[tuple[str, str]] = []
-    for process in processes:
+    for process in order_processes(processes):
         search_texts.append((f"Processo: {process.get('name') or process.get('id')}", json.dumps(process, ensure_ascii=False).lower()))
-        for step in process.get("steps", []):
+        for step in order_process_steps(process):
             step_name = step.get("name") or step.get("id")
             search_texts.append((f"Step: {step_name}", json.dumps(step, ensure_ascii=False).lower()))
     for message_flow in message_flows:
@@ -1456,7 +1484,7 @@ def describe_adapter(adapter_type: str) -> str:
     if "processdirect" in adapter_type:
         return "chiamata diretta a un altro processo CPI"
     if "rfc" in adapter_type:
-        return "chiamata RFC SAP"
+        return "chiamata RFC"
     return adapter_type or "canale di comunicazione"
 
 def describe_step_type(step: dict) -> str:
@@ -1509,15 +1537,15 @@ def describe_step_type(step: dict) -> str:
 def build_client_section(model: dict) -> list[str]:
     paragraphs = []
     name = model["iflow"]["bundle_name"] or model["iflow"]["artifact_id"] or "L'integration flow"
-    participants = model.get("participants", [])
+    sender_participants, receiver_participants = get_role_participants(model)
     message_flows = model.get("message_flows", [])
     scripts = model.get("scripts", [])
     mappings = model.get("mappings", [])
     xslt_list = model.get("xslt_resources", [])
     routers = model.get("routers", [])
-    senders = [p["name"] for p in participants if "sender" in (p.get("type") or "").lower()]
-    receivers = [p["name"] for p in participants if "receiv" in (p.get("type") or "").lower()]
-    sender_ids = [p.get("id", "") for p in participants if "sender" in (p.get("type") or "").lower()]
+    senders = [clean_text(p.get("name")) or clean_text(p.get("id")) for p in sender_participants]
+    receivers = [clean_text(p.get("name")) or clean_text(p.get("id")) for p in receiver_participants]
+    sender_ids = [p.get("id", "") for p in sender_participants]
     sender_flows = [flow for flow in message_flows if flow.get("source_ref") in sender_ids]
     if senders:
         adapter = describe_adapter(sender_flows[0].get("adapter_type", "")) if sender_flows else "canale di ingresso"
@@ -1537,17 +1565,19 @@ def build_client_section(model: dict) -> list[str]:
     for xslt in xslt_list:
         classifications = xslt.get("classifications", [])
         if "cambio_root_tag" in classifications:
-            transformations.append("trasformazioni XSLT che adattano la struttura dei dati per SAP")
+            destination = ", ".join(receivers) or "il sistema destinatario"
+            transformations.append(f"trasformazioni XSLT che adattano la struttura dei dati per {destination}")
         elif "rimozione_struttura" in classifications:
             transformations.append("rimozione della struttura multicanale prima della trasformazione")
     if transformations:
-        paragraphs.append("**Trasformazione**: i dati vengono convertiti nel formato SAP tramite: " + "; ".join(transformations[:8]) + ".")
+        destination = ", ".join(receivers) or "il sistema destinatario"
+        paragraphs.append(f"**Trasformazione**: i dati vengono convertiti nel formato richiesto da {destination} tramite: " + "; ".join(transformations[:8]) + ".")
     else:
         paragraphs.append("**Trasformazione**: i dati vengono convertiti nel formato richiesto dal sistema destinatario tramite le regole di mapping configurate.")
     enrichments = [s for s in scripts if any(kw in s["name"].lower() for kw in ("build", "map", "convert"))]
     if enrichments:
         paragraphs.append("**Arricchimento**: durante l'elaborazione, logiche personalizzate completano i dati: " + "; ".join(s["purpose"] for s in enrichments[:4]) + ".")
-    receiver_ids = [p.get("id", "") for p in participants if "receiv" in (p.get("type") or "").lower()]
+    receiver_ids = [p.get("id", "") for p in receiver_participants]
     receiver_flows = [flow for flow in message_flows if flow.get("target_ref") in receiver_ids]
     if receivers:
         adapter = describe_adapter(receiver_flows[0].get("adapter_type", "")) if receiver_flows else "canale di uscita"
@@ -1725,7 +1755,16 @@ def add_cover_page(doc, model: dict):
     run.font.size = Pt(20)
     direction_paragraph = doc.add_paragraph()
     direction_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = direction_paragraph.add_run("CENTRIC → SAP")
+    source_participants, target_participants = get_role_participants(model)
+    source_name = ", ".join(
+        clean_text(participant.get("name")) or clean_text(participant.get("id"))
+        for participant in source_participants
+    ) or "Sistema sorgente"
+    target_name = ", ".join(
+        clean_text(participant.get("name")) or clean_text(participant.get("id"))
+        for participant in target_participants
+    ) or "Sistema destinatario"
+    run = direction_paragraph.add_run(f"{source_name} → {target_name}")
     run.italic = True
     run.font.size = Pt(14)
     doc.add_paragraph("")
@@ -1758,23 +1797,65 @@ def add_table_of_contents(doc):
     add_field(toc_paragraph, 'TOC \\o "1-3" \\h \\z \\u', "Aggiorna l'indice in Word con Ctrl+A e F9.")
     doc.add_page_break()
 
-def get_participant_role(participant: dict) -> str:
-    participant_type = clean_text(participant.get("type")).lower()
-    if "sender" in participant_type:
-        return "source"
-    if "receiv" in participant_type:
-        return "target"
-    return "other"
+def get_role_participants(model: dict) -> tuple[list[dict], list[dict]]:
+    participants = model.get("participants", [])
+    participant_by_id = {
+        clean_text(participant.get("id")): participant
+        for participant in participants
+        if clean_text(participant.get("id"))
+    }
+    process_ids = {
+        clean_text(process.get("id"))
+        for process in model.get("processes", [])
+        if clean_text(process.get("id"))
+    }
+    sender_ids: set[str] = set()
+    receiver_ids: set[str] = set()
+
+    for participant_id, participant in participant_by_id.items():
+        participant_type = clean_text(participant.get("type")).lower()
+        if "sender" in participant_type:
+            sender_ids.add(participant_id)
+        if "receiver" in participant_type or "receiv" in participant_type:
+            receiver_ids.add(participant_id)
+
+    for flow in model.get("message_flows", []):
+        source_ref = clean_text(flow.get("source_ref"))
+        target_ref = clean_text(flow.get("target_ref"))
+        if source_ref in participant_by_id and target_ref in process_ids:
+            sender_ids.add(source_ref)
+        if source_ref in process_ids and target_ref in participant_by_id:
+            receiver_ids.add(target_ref)
+
+    receiver_ids.difference_update(sender_ids)
+    participant_ids = list(participant_by_id)
+    if not sender_ids and participant_ids:
+        sender_ids.add(next(
+            (participant_id for participant_id in participant_ids if participant_id not in receiver_ids),
+            participant_ids[0],
+        ))
+    if not receiver_ids and len(participant_ids) > 1:
+        fallback_receiver = next(
+            (participant_id for participant_id in reversed(participant_ids) if participant_id not in sender_ids),
+            None,
+        )
+        if fallback_receiver:
+            receiver_ids.add(fallback_receiver)
+
+    return (
+        [participant_by_id[participant_id] for participant_id in participant_ids if participant_id in sender_ids],
+        [participant_by_id[participant_id] for participant_id in participant_ids if participant_id in receiver_ids],
+    )
 
 def get_process_summary(model: dict) -> dict:
-    participants = model.get("participants", [])
     message_flows = model.get("message_flows", [])
     processes = model.get("processes", [])
     mappings = model.get("mappings", [])
     scripts = model.get("scripts", [])
     routers = model.get("routers", [])
-    senders = [p.get("name") or p.get("id") for p in participants if get_participant_role(p) == "source"]
-    receivers = [p.get("name") or p.get("id") for p in participants if get_participant_role(p) == "target"]
+    sender_participants, receiver_participants = get_role_participants(model)
+    senders = [p.get("name") or p.get("id") for p in sender_participants]
+    receivers = [p.get("name") or p.get("id") for p in receiver_participants]
     integration_process = next(
         (p for p in processes if normalize_process_name(p.get("name")) == "integrationprocess"),
         processes[0] if processes else {},
@@ -1783,8 +1864,8 @@ def get_process_summary(model: dict) -> dict:
     subprocesses = [p for p in ordered_processes if p.get("id") != integration_process.get("id")]
     input_adapter = "-"
     output_adapter = "-"
-    sender_ids = {p.get("id") for p in participants if get_participant_role(p) == "source"}
-    receiver_ids = {p.get("id") for p in participants if get_participant_role(p) == "target"}
+    sender_ids = {p.get("id") for p in sender_participants}
+    receiver_ids = {p.get("id") for p in receiver_participants}
     for flow in message_flows:
         if flow.get("source_ref") in sender_ids and input_adapter == "-":
             input_adapter = flow.get("adapter_type") or "-"
@@ -1851,58 +1932,11 @@ def add_executive_summary(doc, model: dict):
     add_table(doc, ["Informazione", "Valore"], summary_rows)
 
 def _add_flow_diagram_legacy(doc, model: dict):
-    participants = model.get("participants", [])
     message_flows = model.get("message_flows", [])
     processes = model.get("processes", [])
-    routers = model.get("routers", [])
 
     def participant_label(participant: dict, fallback: str) -> str:
         return clean_text(participant.get("name")) or clean_text(participant.get("id")) or fallback
-
-    def get_role_participants() -> tuple[list[dict], list[dict]]:
-        participant_by_id = {p.get("id"): p for p in participants if p.get("id")}
-        process_ids = {p.get("id") for p in processes if p.get("id")}
-        sender_ids = set()
-        receiver_ids = set()
-        for p in participants:
-            pid = p.get("id")
-            pt = clean_text(p.get("type")).lower()
-            if "sender" in pt:
-                sender_ids.add(pid)
-            if "receiver" in pt or "receiv" in pt:
-                receiver_ids.add(pid)
-        for flow in message_flows:
-            src = flow.get("source_ref")
-            tgt = flow.get("target_ref")
-            if src in participant_by_id and tgt in process_ids:
-                sender_ids.add(src)
-            if src in process_ids and tgt in participant_by_id:
-                receiver_ids.add(tgt)
-        for p in participants:
-            pid = p.get("id")
-            pname = participant_label(p, "").lower()
-            if any(w in pname for w in ("centric", "source", "sender", "postgres", "client")):
-                sender_ids.add(pid)
-            if any(w in pname for w in ("sap", "receiver", "target", "destination", "s4")):
-                receiver_ids.add(pid)
-        pids = list(participant_by_id.keys())
-        if not sender_ids and pids:
-            sender_ids.add(pids[0])
-        if not receiver_ids and len(pids) >= 2:
-            for pid in reversed(pids):
-                if pid not in sender_ids:
-                    receiver_ids.add(pid)
-                    break
-        receiver_ids -= sender_ids
-        if not receiver_ids and len(pids) >= 2:
-            for pid in reversed(pids):
-                if pid not in sender_ids:
-                    receiver_ids.add(pid)
-                    break
-        return (
-            [participant_by_id[pid] for pid in sender_ids if pid in participant_by_id],
-            [participant_by_id[pid] for pid in receiver_ids if pid in participant_by_id],
-        )
 
     def wrap_text(value: str, max_chars: int = 27) -> list[str]:
         words = clean_text(value).split()
@@ -1941,7 +1975,7 @@ def _add_flow_diagram_legacy(doc, model: dict):
                 oa = adapter
         return ia, oa
 
-    sender_participants, receiver_participants = get_role_participants()
+    sender_participants, receiver_participants = get_role_participants(model)
     source_name = ", ".join(participant_label(p, "Sistema sorgente") for p in sender_participants) or "Sistema sorgente"
     target_name = ", ".join(participant_label(p, "Sistema destinatario") for p in receiver_participants) or "Sistema destinatario"
     input_adapter, output_adapter = get_adapter_labels(sender_participants, receiver_participants)
@@ -1964,10 +1998,6 @@ def _add_flow_diagram_legacy(doc, model: dict):
     important_steps = unique_list(important_steps)[:6]
     if not important_steps:
         important_steps = ["Elaborazione dati"]
-
-    router_names = [clean_text(r.get("name")) or "Router / Decisione" for r in routers if r.get("process_id") == integration_process.get("id")]
-    if router_names and not any("router" in s.lower() or "decision" in s.lower() or "choice" in s.lower() for s in important_steps):
-        important_steps.append(router_names[0])
 
     ordered_processes = order_processes(processes)
     subprocesses = [
@@ -2099,14 +2129,15 @@ def _add_flow_diagram_legacy(doc, model: dict):
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.add_run().add_picture(image_stream, width=Pt(500))
-    doc.add_paragraph("Rappresentazione semplificata dei sistemi, del processo principale e dei sottoprocessi richiamati.")
+    doc.add_paragraph(
+        "Rappresentazione semplificata dei sistemi e dei passaggi principali in ordine BPMN; "
+        "le diramazioni sono appiattite, con dettaglio nella sezione Decisioni e diramazioni."
+    )
 
 def add_flow_diagram(doc, model: dict):
     """Disegna una vista funzionale moderna e leggibile dell'iFlow."""
-    participants = model.get("participants", [])
     message_flows = model.get("message_flows", [])
     processes = model.get("processes", [])
-    routers = model.get("routers", [])
 
     def participant_label(participant: dict, fallback: str) -> str:
         return clean_text(participant.get("name")) or clean_text(participant.get("id")) or fallback
@@ -2138,48 +2169,6 @@ def add_flow_diagram(doc, model: dict):
             lines[-1] = lines[-1][:max_chars - 3].rstrip() + "..."
         return lines
 
-    def get_role_participants() -> tuple[list[dict], list[dict]]:
-        participant_by_id = {p.get("id"): p for p in participants if p.get("id")}
-        process_ids = {p.get("id") for p in processes if p.get("id")}
-        sender_ids = set()
-        receiver_ids = set()
-        for participant in participants:
-            participant_id = participant.get("id")
-            participant_type = clean_text(participant.get("type")).lower()
-            if "sender" in participant_type:
-                sender_ids.add(participant_id)
-            if "receiver" in participant_type or "receiv" in participant_type:
-                receiver_ids.add(participant_id)
-        for flow in message_flows:
-            source_ref = flow.get("source_ref")
-            target_ref = flow.get("target_ref")
-            if source_ref in participant_by_id and target_ref in process_ids:
-                sender_ids.add(source_ref)
-            if source_ref in process_ids and target_ref in participant_by_id:
-                receiver_ids.add(target_ref)
-        for participant in participants:
-            participant_id = participant.get("id")
-            name = participant_label(participant, "").lower()
-            if any(token in name for token in ("centric", "source", "sender", "postgres", "client")):
-                sender_ids.add(participant_id)
-            if any(token in name for token in ("sap", "receiver", "target", "destination", "s4")):
-                receiver_ids.add(participant_id)
-        participant_ids = list(participant_by_id)
-        if not sender_ids and participant_ids:
-            sender_ids.add(participant_ids[0])
-        receiver_ids -= sender_ids
-        if not receiver_ids and len(participant_ids) > 1:
-            fallback_receiver = next(
-                (pid for pid in reversed(participant_ids) if pid not in sender_ids),
-                None,
-            )
-            if fallback_receiver:
-                receiver_ids.add(fallback_receiver)
-        return (
-            [participant_by_id[pid] for pid in participant_ids if pid in sender_ids],
-            [participant_by_id[pid] for pid in participant_ids if pid in receiver_ids],
-        )
-
     def get_adapter_labels(sender_participants: list[dict], receiver_participants: list[dict]) -> tuple[str, str]:
         sender_ids = {p.get("id") for p in sender_participants if p.get("id")}
         receiver_ids = {p.get("id") for p in receiver_participants if p.get("id")}
@@ -2199,7 +2188,7 @@ def add_flow_diagram(doc, model: dict):
             output_adapter = clean_text(message_flows[-1].get("adapter_type"))
         return input_adapter, output_adapter
 
-    sender_participants, receiver_participants = get_role_participants()
+    sender_participants, receiver_participants = get_role_participants(model)
     source_name = ", ".join(participant_label(p, "Sistema sorgente") for p in sender_participants) or "Sistema sorgente"
     target_name = ", ".join(participant_label(p, "Sistema destinatario") for p in receiver_participants) or "Sistema destinatario"
     input_adapter, output_adapter = get_adapter_labels(sender_participants, receiver_participants)
@@ -2230,32 +2219,9 @@ def add_flow_diagram(doc, model: dict):
                 "bpmn_type": bpmn_type,
                 "component_type": component_type,
             })
-    unique_steps = []
-    seen_step_names = set()
-    for step in important_steps:
-        key = step["name"].lower()
-        if key not in seen_step_names:
-            seen_step_names.add(key)
-            unique_steps.append(step)
-    important_steps = unique_steps[:7]
+    important_steps = important_steps[:7]
     if not important_steps:
         important_steps = [{"name": "Elaborazione dati", "type": "Elaborazione", "bpmn_type": "", "component_type": ""}]
-
-    router_names = [
-        clean_text(router.get("name")) or "Router / Decisione"
-        for router in routers
-        if router.get("process_id") == integration_process.get("id")
-    ]
-    if router_names and not any(
-        any(token in step["name"].lower() for token in ("router", "decision", "choice"))
-        for step in important_steps
-    ):
-        important_steps.append({
-            "name": router_names[0],
-            "type": "Router / decisione",
-            "bpmn_type": "exclusivegateway",
-            "component_type": "router",
-        })
 
     subprocesses = [
         clean_text(process.get("name")) or clean_text(process.get("id")) or "Sottoprocesso"
@@ -2469,7 +2435,9 @@ def add_flow_diagram(doc, model: dict):
     caption = doc.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
     caption_run = caption.add_run(
-        "Rappresentazione semplificata dei sistemi, del processo principale e dei sottoprocessi richiamati."
+        "Rappresentazione semplificata: i primi passaggi principali seguono l'ordine BPMN, "
+        "mentre le diramazioni sono appiattite; il dettaglio dei rami e nella sezione Decisioni e diramazioni. "
+        "L'elenco completo degli step e disponibile nella sezione Processi di integrazione."
     )
     caption_run.font.size = Pt(9)
     caption_run.font.color.rgb = RGBColor(0x89, 0x95, 0xA5)
@@ -2887,8 +2855,8 @@ def parse_iflow_zip(zp: Path) -> dict:
     all_objects = []
     for mf in message_flows:
         all_objects.append(("Message Flow", mf.get("name") or mf.get("id"), mf.get("properties", {})))
-    for process in processes:
-        for step in process["steps"]:
+    for process in order_processes(processes):
+        for step in order_process_steps(process):
             all_objects.append(("Step", step.get("name") or step.get("id"), step.get("properties", {})))
     for parameter in parameters:
         parameter["used_by"] = []

@@ -32,6 +32,8 @@ Apri `http://localhost:5000`. Su Render il file `render.yaml` installa le dipend
 - Warning strutturati lato server
 - Template tecnico customizzabile in `templates/technical.hbs`
 - Estrazione esclusivamente deterministica dai file del package
+- Copertina, sintesi, diagramma e descrizioni basati sui sistemi sorgente/destinatario rilevati dai participant e dai message flow, senza nomi cliente hardcoded
+- Ordinamento topologico stabile degli step BPMN, coerente tra diagramma, processi, router e inventari
 
 ## Stack
 
@@ -172,4 +174,3 @@ Recupera una sessione completa per preview/link condivisibile.
 - Nessuna invenzione di valori: se dato non certo viene scritto "Non determinabile da zip".
 - Se mancano file critici: errore bloccante con azione suggerita.
 - Se mancano file non critici: warning e prosecuzione pipeline.
-
